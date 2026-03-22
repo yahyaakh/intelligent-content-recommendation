@@ -1,0 +1,82 @@
+movie_id,title,genre,director,year,runtime,rating
+1,The Shawshank Redemption,Drama,Frank Darabont,1994,142,9.3
+2,The Godfather,Crime,Francis Ford Coppola,1972,175,9.2
+3,The Dark Knight,Action,Christopher Nolan,2008,152,9.0
+4,The Godfather Part II,Crime,Francis Ford Coppola,1974,202,9.0
+5,12 Angry Men,Drama,Sidney Lumet,1957,96,9.0
+6,Schindler's List,Drama,Steven Spielberg,1993,195,8.9
+7,The Lord of the Rings: The Return of the King,Adventure,Peter Jackson,2003,201,8.9
+8,Pulp Fiction,Crime,Quentin Tarantino,1994,154,8.9
+9,Fight Club,Drama,David Fincher,1999,139,8.8
+10,The Lord of the Rings: The Fellowship of the Ring,Adventure,Peter Jackson,2001,178,8.8
+11,Forrest Gump,Drama,Robert Zemeckis,1994,142,8.8
+12,Star Wars: Episode V - The Empire Strikes Back,Action,Irvin Kershner,1980,124,8.7
+13,Inception,Action,Christopher Nolan,2010,148,8.7
+14,The Lord of the Rings: The Two Towers,Adventure,Peter Jackson,2002,179,8.7
+15,The Matrix,Sci-Fi,Wachowski Sisters,1999,136,8.7
+16,Goodfellas,Crime,Martin Scorsese,1990,146,8.7
+17,One Flew Over the Cuckoo's Nest,Drama,Milos Forman,1975,133,8.7
+18,Seven Samurai,Adventure,Akira Kurosawa,1954,207,8.6
+19,Se7en,Crime,David Fincher,1995,127,8.6
+20,City Lights,Romance,Charles Chaplin,1931,87,8.6
+21,The Silence of the Lambs,Thriller,Jonathan Demme,1991,118,8.6
+22,It's a Wonderful Life,Drama,Frank Capra,1946,130,8.6
+23,Star Wars: Episode IV - A New Hope,Action,George Lucas,1977,121,8.6
+24,City of God,Crime,Fernando Meirelles,2002,130,8.6
+25,Saving Private Ryan,Drama,Steven Spielberg,1998,169,8.6
+26,Reservoir Dogs,Crime,Quentin Tarantino,1992,99,8.6
+27,Back to the Future,Adventure,Robert Zemeckis,1985,116,8.5
+28,The Pianist,Drama,Roman Polanski,2002,150,8.5
+29,The Intouchables,Comedy,Olivier Nakache,2011,112,8.5
+30,Lawrence of Arabia,Biography,David Lean,1962,216,8.5
+31,The Departed,Crime,Martin Scorsese,2006,151,8.5
+32,The Dark Knight Rises,Action,Christopher Nolan,2012,165,8.4
+33,The Postman Always Rings Twice,Drama,Bob Rafelson,1981,108,8.4
+34,Mahabharat (1988),Drama,B. R. Chopra,1988,94,8.4
+35,Django Unchained,Western,Quentin Tarantino,2012,165,8.4
+36,Hachi: A Dog's Tale,Drama,Lasse Hallstrom,2009,93,8.4
+37,Life Is Beautiful,Comedy,Roberto Benigni,1997,116,8.6
+38,Memento,Thriller,Christopher Nolan,2000,113,8.4
+39,Indiana Jones and the Last Crusade,Adventure,Steven Spielberg,1989,127,8.2
+40,The Green Mile,Drama,Frank Darabont,1999,189,8.6
+41,Gladiator,Action,Ridley Scott,2000,155,8.5
+42,L.A. Confidential,Crime, Curtis Hanson,1997,138,8.2
+43,Inglourious Basterds,Adventure,Quentin Tarantino,2009,153,8.3
+44,Fight Club,Drama,David Fincher,1999,139,8.8
+45,Inception,Action,Christopher Nolan,2010,148,8.7
+46,The Lord of the Rings: The Return of the King,Adventure,Peter Jackson,2003,201,8.9
+47,Schindler's List,Drama,Steven Spielberg,1993,195,8.9
+48,The Usual Suspects,Crime,Bryan Singer,1995,106,8.5
+49,WALL?E,Animation,Andrew Stanton,2008,98,8.4
+50,Kagemusha,Drama,Akira Kurosawa,1980,180,8.2
+51,Heat,Crime,Michael Mann,1995,170,8.2
+52,Ladyhawke,Fantasy,Richard Donner,1985,121,7.5
+53,Alien,Horror,Ridley Scott,1979,117,8.4
+54,The Thing,Horror,John Carpenter,1982,109,8.1
+55,High Fidelity,Comedy,Stephen Frears,2000,112,7.5
+56,Donnie Darko,Sci-Fi,Richard Kelly,2001,113,8.0
+57,Batman Begins,Action,Christopher Nolan,2005,140,8.2
+58,The Truman Show,Comedy,Peter Weir,1998,103,8.1
+59,Die Hard,Action,John McTiernan,1988,132,8.2
+60,Rear Window,Thriller,Alfred Hitchcock,1954,112,8.5
+61,The Matrix Reloaded,Sci-Fi,Wachowski Sisters,2003,138,7.2
+62,Monsters,Drama,Gareth Edwards,2010,94,7.0
+63,Blade Runner,Sci-Fi,Ridley Scott,1982,117,8.1
+64,Rambo: First Blood,Action,Ted Kotcheff,1982,93,7.7
+65,Ladyhawke,Fantasy,Richard Donner,1985,121,7.5
+66,The King's Speech,Drama,Tom Hooper,2010,118,8.0
+67,Reservoir Dogs,Crime,Quentin Tarantino,1992,99,8.3
+68,Full Metal Jacket,War,Stanley Kubrick,1987,116,8.3
+69,Saving Private Ryan,War,Steven Spielberg,1998,169,8.6
+70,Lawrence of Arabia,Adventure,David Lean,1962,216,8.3
+71,The Fifth Element,Sci-Fi,Luc Besson,1997,126,7.7
+72,Gladiator,Drama,Ridley Scott,2000,155,8.5
+73,The Green Mile,Drama,Frank Darabont,1999,189,8.6
+74,Se7en,Crime,David Fincher,1995,127,8.6
+75,The Postman Always Rings Twice,Drama,Bob Rafelson,1981,108,7.3
+76,American Beauty,Drama,Sam Mendes,1999,122,8.3
+77,Rambo: First Blood,Action,Ted Kotcheff,1982,93,7.7
+78,Seven Samurai,Adventure,Akira Kurosawa,1954,207,8.6
+79,Star Wars: Episode IV - A New Hope,Adventure,George Lucas,1977,121,8.6
+80,Inglourious Basterds,War,Quentin Tarantino,2009,153,8.3
+81,Terminator 2: Judgment Day,Action,James Cameron,1991,137,8.5
