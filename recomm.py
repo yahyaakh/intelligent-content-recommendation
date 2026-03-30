@@ -93,13 +93,13 @@ class MovieRecommendationSystem:
         return pop.sort_values('score', ascending=False)
     def get_popular_movies(self, n=10):
         top_ids = self.movie_popularity.head(n).index
-        return self.movies_df[self.movies_df['movie_id'].isin(top_ids)][['movie_id','title','genre','director','year']].to_dict('records')
+        return self.movies_df[self.movies_df['movie_id'].isin(top_ids)][['movie_id','title','genres','director','year']].to_dict('records')
 
 class ContentBasedRecommender:
     def __init__(self, movies_df):
         self.movies_df = movies_df.copy()
         self.movies_df['decade'] = (self.movies_df['year']//10)*10
-        self.movies_df['features'] = self.movies_df['genre'] + ' ' + self.movies_df['director'] + ' ' + self.movies_df['decade'].astype(str) + 's'
+        self.movies_df['features'] = self.movies_df['genres'] + ' ' + self.movies_df['director'] + ' ' + self.movies_df['decade'].astype(str) + 's'
         self.tfidf = TfidfVectorizer(stop_words='english')
         self.tfidf_matrix = self.tfidf.fit_transform(self.movies_df['features'])
         self.cosine_sim = cosine_similarity(self.tfidf_matrix, self.tfidf_matrix)
@@ -110,7 +110,7 @@ class ContentBasedRecommender:
         sim_scores = list(enumerate(self.cosine_sim[idx]))
         sim_scores = sorted(sim_scores, key=lambda x:x[1], reverse=True)[1:n+1]
         movie_idxs = [i[0] for i in sim_scores]
-        return self.movies_df.iloc[movie_idxs][['movie_id','title','genre','director','year']].to_dict('records')
+        return self.movies_df.iloc[movie_idxs][['movie_id','title','genres','director','year']].to_dict('records')
 
 class CollaborativeRecommender:
     def __init__(self, interactions_df):
@@ -328,9 +328,9 @@ class MovieRecommenderCLI:
         user_interacts = self.interactions_df[self.interactions_df['user_id'] == user_id]
         if user_interacts.empty:
             return {'demographics': user_demo.to_dict(),
-                    'stats': {'total_movies': 0, 'avg_rating': 0, 'favorite_genre': 'None'}}
-        watched = user_interacts.merge(self.movies_df[['movie_id', 'genre']], on='movie_id')
-        fav_genre = watched['genre'].mode().iloc[0] if not watched.empty else 'None'
+                    'stats': {'total_movies': 0, 'avg_rating': 0, 'favorite_genres': 'None'}}
+        watched = user_interacts.merge(self.movies_df[['movie_id', 'genres']], on='movie_id')
+        fav_genre = watched['genres'].mode().iloc[0] if not watched.empty else 'None'
         stats = {'total_movies': len(user_interacts),
                  'avg_rating': user_interacts['rating'].mean(),
                  'avg_completion': user_interacts['completion_rate'].mean(),
@@ -344,7 +344,7 @@ class MovieRecommenderCLI:
             print("No movies found.")
             return
         for i, movie in enumerate(movies, 1):
-            print(f"{i}. {movie['title']} ({movie['year']}) - Genre: {movie['genre']} | Director: {movie['director']}")
+            print(f"{i}. {movie['title']} ({movie['year']}) - Genres: {movie['genres']} | Director: {movie['director']}")
 
 
 
@@ -452,7 +452,7 @@ class MovieRecommenderCLI:
                         recs = self.get_user_recommendations(user_id, algo, 3)
                         print(f"\n{algo.upper()} RECOMMENDATIONS:")
                         for i, movie in enumerate(recs, 1):
-                            print(f"  {i}. {movie['title']} ({movie['year']}) - {movie['genre']}")
+                            print(f"  {i}. {movie['title']} ({movie['year']}) - {movie['genres']}")
                     except Exception as e:
                         print(f"  Could not get {algo} recommendations: {e}")
 
@@ -467,7 +467,7 @@ class MovieRecommenderCLI:
                             recs = self.get_user_recommendations(user_id, algo, 5)
                             print(f"\n{algo.upper()} RECOMMENDATIONS:")
                             for i, movie in enumerate(recs, 1):
-                                print(f"  {i}. {movie['title']} ({movie['year']}) - {movie['genre']}")
+                                print(f"  {i}. {movie['title']} ({movie['year']}) - {movie['genres']}")
                         except Exception as e:
                             print(f"  Could not get {algo} recommendations: {e}")
                 print("TBD)")
@@ -489,12 +489,13 @@ class MovieRecommenderCLI:
 
 def main():
     print("Loading datasets...")
-    movies_df = pd.read_csv('../movies.csv')
-    users_df = pd.read_csv('../users.csv')
+    movies_df = pd.read_csv('data/data/processed/movies.csv')
+    users_df = pd.read_csv('data/data/processed/users.csv')
+    interactions_df = pd.read_csv('data/data/processed/ratings.csv')
     print(f"Users: {len(users_df)}; Movies: {len(movies_df)}")
     
-    print("1. Generating dense interactions...")
-    interactions_df = generate_interactions_dense(users_df, movies_df)
+    # print("1. Generating dense interactions...")
+    # interactions_df = generate_interactions_dense(users_df, movies_df)
     
     print("2. Initializing Content Recommender...")
     content_rec = ContentBasedRecommender(movies_df)
