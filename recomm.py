@@ -2,11 +2,10 @@
 
 import pandas as pd
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import warnings
 warnings.filterwarnings('ignore')
-
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
@@ -98,15 +97,41 @@ class MovieRecommendationSystem:
 class ContentBasedRecommender:
     def __init__(self, movies_df):
         self.movies_df = movies_df.copy()
-        self.movies_df['decade'] = (self.movies_df['year']//10)*10
-        self.movies_df['features'] = self.movies_df['genres'] + ' ' + self.movies_df['director'] + ' ' + self.movies_df['decade'].astype(str) + 's'
+        # --- PIPELINE 1: HARD METADATA ---
+        # Initialize CountVectorizer()
+
+        self.count_vec = CountVectorizer()
+        # count_matrix = fit and transform the 'metadata_features' column
+        self.meta_matrix = self.count_vec.fit_transform(self.movies_df['metadata_features'])
+        # meta_sim = calculate cosine_similarity(count_matrix, count_matrix)
+
+        self.meta_sim = cosine_similarity(self.meta_matrix, self.meta_matrix)
+
+
+        # --- PIPELINE 2: SOFT TEXT ---
         self.tfidf = TfidfVectorizer(stop_words='english')
-        self.tfidf_matrix = self.tfidf.fit_transform(self.movies_df['features'])
-        self.cosine_sim = cosine_similarity(self.tfidf_matrix, self.tfidf_matrix)
+
+        # tfidf_matrix = fit and transform the 'text_features' column
+
+        self.text_matrix = self.tfidf.fit_transform(self.movies_df['text_features'].fillna(''))
+        # text_sim = calculate cosine_similarity(tfidf_matrix, tfidf_matrix)
+
+        self.text_sim = cosine_similarity(self.text_matrix, self.text_matrix)
+
+        # --- THE BLEND ---
+        # Give Metadata 75% of the voting power, and Plot text 25%
+        self.cosine_sim = (self.meta_sim * 0.75) + (self.text_sim * 0.25)
+
+
+        ### explain this function that is responsible for finding the top n movies most similar to the movie we choose
     def get_similar_movies(self, movie_id, n=10):
+
+        ## find the movie : search the pandas df movies_df for the row containing the movie_id passed in.
         idxs = self.movies_df[self.movies_df['movie_id'] == movie_id].index
         if len(idxs) == 0: return []
         idx = idxs[0]
+
+
         sim_scores = list(enumerate(self.cosine_sim[idx]))
         sim_scores = sorted(sim_scores, key=lambda x:x[1], reverse=True)[1:n+1]
         movie_idxs = [i[0] for i in sim_scores]

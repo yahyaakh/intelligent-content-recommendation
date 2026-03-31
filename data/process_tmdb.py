@@ -26,24 +26,26 @@ df['runtime']  = df['runtime'].fillna(100)
 
 
 def build_content_features(row):
-    # hint: get genres, replace '|' with spaces, lowercase
-    genres = row['genres'].replace('|', ' ').lower()
-    keywords = row['keywords'].replace('|', ' ').lower()
-    director = row['director'].lower().replace(' ', '_')
-    cast = row['cast'].replace('|', ' ').lower()
+    genres = row['genres'].lower().replace(' ', '_').replace('|', ' ')
+    keywords = row['keywords'].lower().replace(' ', '_').replace('|', ' ')
+    director = row['director'].lower().replace(' ', '_').replace('|', ' ')
+    cast = row['cast'].lower().replace(' ', '_').replace('|', ' ')
     language = row['original_language']
     overview = row['overview'].lower()
     decade = str((row['year'] // 10) * 10) + 's'
 
-    return f"{genres} {genres} {cast} {director} {keywords} {language} {decade} {overview}"
+    # hard constraints
+    meta_string = f"{genres}  {cast} {director} {keywords}"
 
-df['content_features'] = df.apply(build_content_features, axis=1)
+    # soft
+    text_string = f" {overview} {language} {decade} "
+
+    return pd.Series([meta_string , text_string])
 
 
-print("\n── Shape:", df.shape)
-print("── Nulls:\n", df.isnull().sum())
-print("\n── Sample content_features:\n", df['content_features'].iloc[0])
+df[['metadata_features', 'text_features']] = df.apply(build_content_features, axis=1)
 
+df = df.drop_duplicates(subset=['title'])
 
 os.makedirs("data/processed", exist_ok=True)
 
