@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 import pandas as pd
 import numpy as np
@@ -15,6 +14,88 @@ from surprise import PredictionImpossible
 from surprise.model_selection import train_test_split
 from surprise import accuracy
 from collections import defaultdict
+
+
+CHILD_UNSAFE_KEYWORDS = {
+    # Violence & Murder
+    'murder', 'mass murder', 'serial killer', 'massacre', 'slaughter',
+    'assassination', 'hitman', 'sniper', 'execution', 'death penalty',
+    'electric chair', 'decapitation', 'beheading', 'severed head',
+    'gore', 'brutality', 'torture', 'sadism', 'psychopath', 'cannibal',
+    'dead body', 'corpse', 'severed foot', 'mutilation', 'atrocity',
+    'war crimes', 'genocide', 'ethnic cleansing',
+
+    # Sexual Content
+    'rape', 'sexual abuse', 'sexual assault', 'sexual sadism',
+    'sexual violence', 'sexual humiliation', 'sex crime',
+    'nudity', 'pornography', 'porn industry', 'porn actor',
+    'prostitute', 'prostitution', 'brothel', 'pimp', 'call girl',
+    'pedophilia', 'pedophile', 'underage sex', 'eroticism',
+    'adultery', 'infidelity', 'transvestism', 'transsexuality',
+    'masturbation', 'erotic', 'femme fatale', 'lust',
+
+    # Drugs & Substance Abuse
+    'drug dealer', 'drug crime', 'drug trafficking', 'drug abuse',
+    'drug addiction', 'drug addict', 'junkie', 'heroin', 'cocaine',
+    'overdose', 'hallucination', 'marijuana', 'pot smoking',
+    'drug cartel', 'narcos', 'drug smuggling', 'lsd',
+    'methamphetamine', 'ecstasy', 'alcoholism', 'alcohol abuse',
+
+    # Nazism & Extremism
+    'nazi', 'nazism', 'neo-nazism', 'fascism', 'fascist',
+    'nazi occupation', 'nsdap (nazi party)', 'ss (nazi schutzstaffel)',
+    'swastika', 'hitler youth', 'national socialism',
+    'national socialist party', 'neo-nazi', 'white supremacy',
+    'terrorism', 'extremism', 'ku klux klan', 'hitler',
+
+    # Suicide & Self Harm
+    'suicide', 'suicide attempt', 'suicidal thoughts', 'seppuku',
+    'self-destruction', 'self sacrifice', 'dying wish',
+
+    # War Atrocities
+    'holocaust (shoah)', 'concentration camp', 'gas chamber',
+    'concentration camp prisoner', 'jew persecution',
+    'auschwitz-birkenau concentration camp', 'genocide',
+    'war crimes', 'death squad', 'prison camp',
+    'children in wartime', 'child soldier',
+
+    # Child Abuse & Exploitation
+    'child abuse', 'child murder', 'child kidnapping',
+    'children in danger', 'child labour', 'child bride',
+    'sexual abuse', 'incest', 'child protection',
+
+    # Organized Crime & Violence
+    'gangster', 'gang war', 'crime boss', 'mafia',
+    'organized crime', 'cartel', 'gang violence', 'yakuza',
+    'street gang', 'mob', 'mobster', 'criminal mastermind',
+    'bounty hunter', 'gun battle', 'shootout', 'gunfight',
+    'heist', 'bank robbery', 'kidnapping', 'hostage',
+    'human trafficking', 'slavery', 'slave trade',
+
+
+    'mercenary', 'anti hero', 'vigilante', 'assassin',
+    'shotgun', 'sniper', 'gunfight', 'gun battle', 'shootout',
+    'decapitation', 'gore', 'brutality', 'sadism',
+
+    # Dark Psychological Themes
+    'nihilism', 'insanity', 'schizophrenia', 'psychosis',
+    'mental breakdown', 'paranoia', 'hallucination',
+    'dementia', 'electroconvulsive therapy',
+
+    # Explicit Horror Themes
+    'exorcism', 'demonic possession', 'satanism', 'occult',
+    'necrophilia', 'cannibalism', 'gore',
+
+
+
+'lunatic asylum', 'insane asylum', 'asylum',
+'polygamy', 'concubine', 'oppression',
+'electroconvulsive therapy', 'lobotomy',
+'death row', 'execution', 'electric chair',
+'forced labor', 'slave labor',
+}
+
+
 
 # Evaluation metrics
 def dcg_at_k(recommended_items, relevant_set, k):
@@ -137,26 +218,64 @@ class ContentBasedRecommender:
         movie_idxs = [i[0] for i in sim_scores]
         return self.movies_df.iloc[movie_idxs][['movie_id','title','genres','director','year']].to_dict('records')
 
+
+# The collaborative recommender core idea:
+#
+# "Who else has similar taste to this user, and what did they like that this user hasn't seen yet?"
+#
+# It never looks at what a movie is about. It doesn't care about genres, directors, or plot. It only looks at the pattern of ratings across users.
+
 class CollaborativeRecommender:
     def __init__(self, interactions_df):
         self.interactions_df = interactions_df.copy()
+
+        # Takes the ratings dataframe and makes a copy of it.
+        # The .copy() is important — it prevents any changes inside this class from accidentally modifying the original dataframe outside.
+
+
+        # A safety check. If there are no ratings at all, create empty placeholders and exit early.
+        # Without this, the pivot table below would crash on empty data.
+
         if len(interactions_df) == 0:
             self.user_movie_matrix = pd.DataFrame()
             self.user_similarity_df = pd.DataFrame()
             return
+
+
         self.user_movie_matrix = self.interactions_df.pivot(index='user_id',columns='movie_id',values='rating').fillna(0)
-        self.user_similarity = cosine_similarity(self.user_movie_matrix)
+
+        rated_mask = self.user_movie_matrix > 0
+        self.user_means = self.user_movie_matrix.replace(0, np.nan).mean(axis=1)
+        self.centered_matrix = self.user_movie_matrix.copy().astype(float)
+        self.centered_matrix[rated_mask] = self.centered_matrix[rated_mask].sub(
+            self.user_means, axis=0
+        )
+
+        self.user_similarity = cosine_similarity(self.centered_matrix)
+
+
         self.user_similarity_df = pd.DataFrame(self.user_similarity,index=self.user_movie_matrix.index,columns=self.user_movie_matrix.index)
+
+
     def get_user_recommendations(self, user_id, n=10):
         if user_id not in self.user_movie_matrix.index: return []
         user_similarities = self.user_similarity_df[user_id].sort_values(ascending=False)
+        # print(f"DEBUG user_similarities are {user_similarities}")
+
+
         similar_users = user_similarities.iloc[1:6].index
+        # print(f"DEBUG similar_users are {similar_users}")
+
         user_movies = set(self.user_movie_matrix.loc[user_id][self.user_movie_matrix.loc[user_id]>0].index)
+        # print(f"DEBUG user_movies are {user_movies}")
+
+
         recommendations = {}
         for user in similar_users:
-            for movie_id, rating in self.user_movie_matrix.loc[user].items():
-                if rating > 3.5 and movie_id not in user_movies:
-                    recommendations.setdefault(movie_id,[]).append(rating*user_similarities[user])
+            for movie_id, centered_rating in self.centered_matrix.loc[user].items():
+
+                if centered_rating > 0 and movie_id not in user_movies:
+                    recommendations.setdefault(movie_id,[]).append(centered_rating * user_similarities[user])
         avg_recs = {mid:np.mean(rates) for mid,rates in recommendations.items()}
         sorted_recs = sorted(avg_recs.items(),key=lambda x:x[1],reverse=True)
         return [m for m,s in sorted_recs[:n]]
@@ -285,13 +404,14 @@ class RecommendationEvaluator:
 
 
 class MovieRecommenderCLI:
-    def __init__(self, hybrid_rec, movies_df, users_df, interactions_df, evaluator, surprise_rec=None):
+    def __init__(self, hybrid_rec, movies_df, users_df, interactions_df, evaluator, surprise_rec=None , constraint_layer=None):
         self.hybrid_rec = hybrid_rec
         self.movies_df = movies_df
         self.users_df = users_df
         self.interactions_df = interactions_df
         self.evaluator = evaluator
         self.surprise_rec = surprise_rec
+        self.constraint_layer = constraint_layer
 
     def simulate_watching(self, user_id, movie_id, rating=None, watch_duration=None):
         if rating is None:
@@ -327,23 +447,97 @@ class MovieRecommenderCLI:
         movie_title = self.movies_df[self.movies_df['movie_id'] == movie_id]['title'].iloc[0]
         print(f"{action} interaction: User {user_id} watched '{movie_title}' (Rating: {rating}, Duration: {watch_duration}min)")
 
+        # method to build richer user profile data
+    def build_constraint_profile(self, user_id):
+            user_ratings = self.interactions_df[self.interactions_df['user_id'] == user_id]
+
+            watched_movies = user_ratings.merge(self.movies_df, on='movie_id', how='inner')
+
+            # only add movies with ratings of 4 or more
+            liked_movies = watched_movies[watched_movies["rating"] >= 4]
+
+            # all genres user watched
+            all_watched_genres = set()
+            for genre_string in watched_movies['genres'].dropna():
+                for g in genre_string.split('|'):
+                    all_watched_genres.add(g.strip())
+
+            liked_genres = set()
+            for genre_string in liked_movies['genres'].dropna():
+                for g in genre_string.split('|'):
+                    liked_genres.add(g.strip())
+
+            liked_directors = set(liked_movies['director'].tolist())
+
+            liked_movies['decade'] = (liked_movies['year'] // 10) * 10
+            preferred_decade = liked_movies['decade'].mode().iloc[0] if not liked_movies.empty else 1990
+
+            # Preferred language
+            preferred_language = watched_movies['original_language'].mode().iloc[
+                0] if not watched_movies.empty else 'en'
+
+            # Average runtime they tolerate
+            avg_runtime = watched_movies['runtime'].mean()
+
+            user_row = self.users_df[self.users_df['user_id'] == user_id].iloc[0]
+            user_age = int(user_row['age'])
+
+            return {
+                'user_id': user_id,
+                'age': user_age,  # ← add this
+                'all_watched_genres': all_watched_genres,  # for hard constraint
+                'liked_genres': liked_genres,  # for soft constraint
+                'liked_directors': liked_directors,  # for soft constraint
+                'preferred_decade': preferred_decade,  # for soft constraint
+                'preferred_language': preferred_language,  # for hard constraint
+                'avg_runtime': avg_runtime,  # for contextual constraint
+                'n_ratings': len(user_ratings)  # for sparse user detection
+            }
+
     def get_user_recommendations(self, user_id, algorithm='hybrid', n=10):
+        # --- Step 1: Get raw recommendations from whichever algorithm ---
         if algorithm == 'hybrid':
-            return self.hybrid_rec.get_hybrid_recommendations(user_id, n)
+            recs = self.hybrid_rec.get_hybrid_recommendations(user_id, n)
         elif algorithm == 'collaborative':
             movie_ids = self.hybrid_rec.collab_rec.get_user_recommendations(user_id, n)
-            return [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict() for mid in movie_ids if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
+            recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
+                    for mid in movie_ids
+                    if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
         elif algorithm == 'content':
             user_movies = self.interactions_df[self.interactions_df['user_id'] == user_id]
             if user_movies.empty:
-                return self.hybrid_rec.rec_system.get_popular_movies(n)
-            fav_movie = user_movies.loc[user_movies['rating'].idxmax(), 'movie_id']
-            return self.hybrid_rec.content_rec.get_similar_movies(fav_movie, n)
+                recs = self.hybrid_rec.rec_system.get_popular_movies(n)
+            else:
+                fav_movie = user_movies.loc[user_movies['rating'].idxmax(), 'movie_id']
+                recs = self.hybrid_rec.content_rec.get_similar_movies(fav_movie, n)
         elif algorithm == 'popular':
-            return self.hybrid_rec.rec_system.get_popular_movies(n)
+            recs = self.hybrid_rec.rec_system.get_popular_movies(n)
         elif algorithm == 'surprise' and self.surprise_rec:
             movie_ids = self.surprise_rec.get_user_recommendations(user_id, n)
-            return [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict() for mid in movie_ids if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
+            recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
+                    for mid in movie_ids
+                    if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
+
+        enriched = []
+        for movie in recs:
+            movie_id = movie.get('movie_id')
+            full_data = self.movies_df[self.movies_df['movie_id'] == movie_id]
+            if not full_data.empty:
+                enriched.append(full_data.iloc[0].to_dict())
+            else:
+                enriched.append(movie)
+
+        # --- Step 3: Build user profile ---
+        user_profile = self.build_constraint_profile(user_id)
+
+        # --- Step 4: Apply constraints on enriched data ---
+        filtered = self.constraint_layer.apply_hard_constraints(enriched, user_profile)
+
+        # apply soft filter
+        reranked = self.constraint_layer.apply_soft_constraints(filtered, user_profile)
+
+        return reranked
+
 
     def find_similar_movies(self, movie_id, n=5):
         return self.hybrid_rec.content_rec.get_similar_movies(movie_id, n)
@@ -351,17 +545,38 @@ class MovieRecommenderCLI:
     def get_user_profile(self, user_id):
         user_demo = self.users_df[self.users_df['user_id'] == user_id].iloc[0]
         user_interacts = self.interactions_df[self.interactions_df['user_id'] == user_id]
+
         if user_interacts.empty:
             return {'demographics': user_demo.to_dict(),
                     'stats': {'total_movies': 0, 'avg_rating': 0, 'favorite_genres': 'None'}}
+
         watched = user_interacts.merge(self.movies_df[['movie_id', 'genres']], on='movie_id')
         fav_genre = watched['genres'].mode().iloc[0] if not watched.empty else 'None'
-        stats = {'total_movies': len(user_interacts),
-                 'avg_rating': user_interacts['rating'].mean(),
-                 'avg_completion': user_interacts['completion_rate'].mean(),
-                 'total_watch_time': user_interacts['watch_duration'].sum(),
-                 'favorite_genre': fav_genre}
-        return {'demographics': user_demo.to_dict(), 'stats': stats}
+
+        constraint_profile = self.build_constraint_profile(user_id)
+
+        stats = {
+            'total_movies': len(user_interacts),
+            'avg_rating': round(user_interacts['rating'].mean(), 2),
+            'avg_completion': round(user_interacts['completion_rate'].mean(), 2),
+            'total_watch_time': user_interacts['watch_duration'].sum(),
+            'favorite_genre': fav_genre
+        }
+
+        taste = {
+            'liked_genres': sorted(constraint_profile['liked_genres']),
+            'all_watched_genres': sorted(constraint_profile['all_watched_genres']),
+            'liked_directors': sorted(constraint_profile['liked_directors']),
+            'preferred_decade': constraint_profile['preferred_decade'],
+            'preferred_language': constraint_profile['preferred_language'],
+            'avg_runtime_tolerance': f"{constraint_profile['avg_runtime']:.0f} min"
+        }
+
+        return {
+            'demographics': user_demo.to_dict(),
+            'stats': stats,
+            'taste_profile': taste
+        }
 
     def display_movies(self, movies, title="Movies"):
         print(f"\n=== {title} ===")
@@ -444,6 +659,7 @@ class MovieRecommenderCLI:
                 user_id = int(input("User ID: "))
                 algorithm = input("Algorithm (hybrid/collaborative/content/popular/surprise) [hybrid]: ").strip() or 'hybrid'
                 n = int(input("Number of recommendations [5]: ") or 5)
+
                 recs = self.get_user_recommendations(user_id, algorithm, n)
                 self.display_movies(recs, f"{algorithm.title()} Recommendations")
 
@@ -462,11 +678,32 @@ class MovieRecommenderCLI:
                 similar = self.find_similar_movies(movie_id, n)
                 self.display_movies(similar, f"Movies Similar to ID {movie_id}")
 
+
             elif choice == '4':
                 user_id = int(input("User ID: "))
                 profile = self.get_user_profile(user_id)
-                print(f"\nUser {user_id} Profile:")
-                print(profile)
+                d = profile['demographics']
+                s = profile['stats']
+                t = profile['taste_profile']
+
+                print(f"\n{'=' * 50}")
+                print(f"  USER {user_id} PROFILE")
+                print(f"{'=' * 50}")
+                print(f"\n  Demographics:")
+                print(f"    Age: {d['age']} | Gender: {d['gender']} | Occupation: {d['occupation']}")
+                print(f"    Age Group: {d['age_group']} | Country: {d['country']}")
+                print(f"\n  Activity Stats:")
+                print(f"    Movies rated:     {s['total_movies']}")
+                print(f"    Average rating:   {s['avg_rating']}")
+                print(f"    Avg completion:   {s['avg_completion']}")
+                print(f"    Total watch time: {s['total_watch_time']} min")
+                print(f"\n  Taste Profile:")
+                print(f"    Preferred decade:   {t['preferred_decade']}s")
+                print(f"    Preferred language: {t['preferred_language']}")
+                print(f"    Avg runtime:        {t['avg_runtime_tolerance']}")
+                print(f"    Liked genres:       {', '.join(t['liked_genres'])}")
+                print(f"    Liked directors:    {', '.join(t['liked_directors'])}")
+                print(f"{'=' * 50}")
 
             elif choice == '5':  # Compare recommendation algorithms
                 user_id = int(input("User ID: "))
@@ -512,6 +749,116 @@ class MovieRecommenderCLI:
             else:
                 print("Invalid choice, please try again.")
 
+
+class ConstraintLayer:
+  def __init__(self, movies_df):
+      self.movies_df = movies_df
+
+
+
+  def apply_soft_constraints (self, recommendations, user_profile):
+
+      scored_movies = []
+      for movie in recommendations:
+          score = 1
+          if movie['original_language'] != user_profile['preferred_language']:
+              score *= 0.8
+
+          if movie['director'] in user_profile['liked_directors']:
+              score *= 1.3
+
+          movie_decade = (movie['year'] // 10) * 10
+          if movie_decade == user_profile['preferred_decade']:
+              score *= 1.2
+
+          elif abs(movie_decade - user_profile['preferred_decade']) > 20:
+              score *= 0.9  # slight penalty for very distant era
+
+          # Movies containing genres from the users liked genres (not just watched) get boosted:
+          movie_genres = set(str(movie.get('genres', '')).split('|'))
+          liked_genre = movie_genres.intersection(user_profile['liked_genres'])
+          if liked_genre:
+              score *= (1 + 0.1 * len(liked_genre))  # 10% per matching liked genre
+
+          movie['soft_score'] = round(score, 4)
+          scored_movies.append(movie)
+
+      scored_movies.sort(key=lambda x: x['soft_score'], reverse=True)
+
+      # print(f"\n[Soft Constraints] Re-ranked {len(scored_movies)} movies:")
+      # for m in scored_movies:
+      #     print(f"  {m['title']} — score: {m['soft_score']}")
+
+      return scored_movies
+
+
+
+
+
+  def apply_hard_constraints(self, recommendations, user_profile):
+    filtered_movies=[]
+    removed_movies = []
+
+    # loop through all recommendations and filter
+    user_genres = user_profile['all_watched_genres']
+
+    user_age = user_profile.get('age', 18)
+    # We chose 18 as default because it is the safest assumption when age is unknown
+
+
+    for movie in recommendations:
+        if user_age < 13:
+        # Check genres
+            movie_genres = set(str(movie.get('genres', '')).split('|'))
+            adult_genres = {'Horror', 'Thriller', 'Crime', 'War'}
+            if movie_genres.intersection(adult_genres):
+                removed_movies.append((movie['title'], f'age restricted — adult genre (user is {user_age})'))
+                continue
+
+        # Check keywords
+            movie_keywords = str(movie.get('keywords', '')).lower()
+            triggered = [kw for kw in CHILD_UNSAFE_KEYWORDS if kw in movie_keywords]
+            if triggered:
+                 removed_movies.append(
+                 (movie['title'], f'age restricted — unsafe keywords: {triggered} (user is {user_age})'))
+                 continue
+
+
+        # movie must match user's preferred language, if not remove it
+        # if movie.get('original_language') != user_profile['preferred_language']:
+        #      removed_movies.append((movie['title'], 'language mismatch'))
+        #
+        #      continue
+
+
+
+    # movie must share at least one genre with user's history, if not remove it and put it in removed
+        movie_genres = set(str(movie.get('genres', '')).split('|'))
+        if not movie_genres.intersection(user_profile['all_watched_genres']):
+
+             removed_movies.append((movie['title'], 'no genre overlap'))
+             continue
+
+
+    # movie runtime must not exceed 1.5x user's average tolerance
+        runtime = movie.get('runtime', 0)
+        max_runtime = user_profile['avg_runtime'] * 1.5
+        if runtime and runtime > max_runtime:
+              removed_movies.append((movie['title'], f'runtime {runtime}min exceeds limit {max_runtime:.0f}min'))
+              continue
+
+        filtered_movies.append(movie)
+
+    if removed_movies:
+        print(f"\n[Hard Constraints] Removed {len(removed_movies)} movies:")
+        for title, reason in removed_movies:
+            print(f"  ✗ {title} — {reason}")
+
+    return filtered_movies
+
+
+
+
 def main():
     print("Loading datasets...")
     movies_df = pd.read_csv('data/data/processed/movies.csv')
@@ -542,10 +889,21 @@ def main():
     
     print("8. Initializing Surprise Recommender (SVD)...")
     surprise_rec = SurpriseRecommender(interactions_df)
-    
+
     print("9. Launching CLI...")
-    cli = MovieRecommenderCLI(hybrid_rec, movies_df, users_df, interactions_df, evaluator, surprise_rec)
+    constraint_layer = ConstraintLayer(movies_df)
+
+    cli = MovieRecommenderCLI(hybrid_rec, movies_df, users_df, interactions_df, evaluator, surprise_rec , constraint_layer)
+
+    print("10. Initializing Constraint Layer...")
+
+
+
+
     cli.run_cli()
+
 
 if __name__ == "__main__":
     main()
+
+
