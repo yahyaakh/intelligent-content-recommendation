@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Personal Recommendations{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/personal.css' %}">
+{% endblock %}
+
+{% block content %}
+
+<div class="personal-page">
+     {% csrf_token %}
+    <h1 class="page-title">Get Personal Recommendations</h1>
+    <p class="subtitle">Add a few movies you like and rate them — we'll find similar films.</p>
+
+    <div class="search-wrap">
+        <input type="text" id="movieSearch" class="search-input-full"
+               placeholder="Search for a movie to add...">
+        <div id="suggestions" class="suggestions"></div>
+    </div>
+
+    <div id="selectedMovies" class="selected-movies"></div>
+
+    <div class="action-row">
+        <label>Number of recommendations:
+            <select id="numResults">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="15">15</option>
+            </select>
+        </label>
+        <button id="getRecsBtn" class="submit-btn" disabled>
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Get Recommendations
+        </button>
+    </div>
+
+    <div id="results" class="results-area"></div>
+</div>
+
+<script>
+const selected = [];  // {movie_id, title, year, rating}
+
+const searchInput = document.getElementById('movieSearch');
+const suggestions = document.getElementById('suggestions');
+const selectedBox = document.getElementById('selectedMovies');
+const getBtn      = document.getElementById('getRecsBtn');
+const resultsBox  = document.getElementById('results');
+
+let debounce;
+searchInput.addEventListener('input', () => {
+    clearTimeout(debounce);
+    const q = searchInput.value.trim();
+    if (q.length < 2) { suggestions.innerHTML = ''; return; }
+    debounce = setTimeout(() => {
+        fetch(`/movie-search/?q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(data => renderSuggestions(data));
+    }, 250);
+});
+
+function renderSuggestions(movies) {
+    suggestions.innerHTML = '';
+    movies.forEach(m => {
+        if (selected.find(s => s.movie_id === m.movie_id)) return;
+        const div = document.createElement('div');
+        div.className = 'suggestion-item';
+        div.textContent = `${m.title} (${m.year})`;
+        div.onclick = () => addMovie(m);
+        suggestions.appendChild(div);
+    });
+}
+
+function addMovie(m) {
+    selected.push({ ...m, rating: 5 });
+    searchInput.value = '';
+    suggestions.innerHTML = '';
+    renderSelected();
+}
+
+function removeMovie(id) {
+    const i = selected.findIndex(s => s.movie_id === id);
+    if (i > -1) selected.splice(i, 1);
+    renderSelected();
+}
+
+function setRating(id, val) {
+    const m = selected.find(s => s.movie_id === id);
+    if (m) m.rating = parseInt(val);
+}
+
+function renderSelected() {
+    selectedBox.innerHTML = '';
+    selected.forEach(m => {
+        const card = document.createElement('div');
+        card.className = 'selected-card';
+        card.innerHTML = `
+            <span class="selected-title">${m.title} <span class="selected-year">(${m.year})</span></span>
+            <div class="selected-controls">
+                <select onchange="setRating(${m.movie_id}, this.value)">
+                    <option value="5" selected>★ 5</option>
+                    <option value="4">★ 4</option>
+                    <option value="3">★ 3</option>
+                    <option value="2">★ 2</option>
+                    <option value="1">★ 1</option>
+                </select>
+                <button class="remove-btn" onclick="removeMovie(${m.movie_id})">✕</button>
+            </div>`;
+        selectedBox.appendChild(card);
+    });
+    getBtn.disabled = selected.length === 0;
+}
+
+getBtn.addEventListener('click', () => {
+    resultsBox.innerHTML = '<p class="loading">Finding recommendations...</p>';
+
+    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+    fetch('/personal/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken
+        },
+        body: JSON.stringify({
+            movies: selected.map(s => ({ movie_id: s.movie_id, rating: s.rating })),
+            n: document.getElementById('numResults').value
+        })
+    })
+    .then(r => r.json())
+    .then(data => renderResults(data.results || []));
+});
+
+function renderResults(recs) {
+    if (!recs.length) { resultsBox.innerHTML = '<p class="loading">No recommendations found.</p>'; return; }
+    let html = '<h3 class="results-heading">Recommended for you</h3>';
+    recs.forEach((r, i) => {
+        const genres = r.genres.map(g => `<span class="genre-tag">${g}</span>`).join('');
+        html += `
+        <div class="mini-card recommend">
+            <div class="mini-rank">#${i + 1}</div>
+            <div class="mini-info">
+                <span class="mini-title">${r.title} <span class="mini-year">(${r.year})</span></span>
+                <div class="mini-genres">${genres}</div>
+                <p class="mini-meta">Dir: ${r.director}</p>
+            </div>
+            <div class="mini-score">${r.rating}</div>
+        </div>`;
+    });
+    resultsBox.innerHTML = html;
+}
+</script>
+
+{% endblock %}

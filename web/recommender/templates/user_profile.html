@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}User Profile{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/profile_card.css' %}">
+{% endblock %}
+
+{% block content %}
+
+<div class="profile-page">
+
+    <form method="POST" action="/profile/">
+        <h1 class="page-title">User Profile</h1>
+        {% csrf_token %}
+        <div class="search-box">
+            <input class="search-input" type="number" name="user_id"
+                   placeholder="Enter a valid User ID , Eg 1"
+                   min="1"
+                   value="{{ user_id|default:'' }}">
+            <button class="search-btn" type="submit">
+                <i class="fa-solid fa-magnifying-glass"></i>
+            </button>
+        </div>
+    </form>
+
+    {% if error %}
+<div class="error-msg">
+    <i class="fa-solid fa-circle-exclamation"></i>
+    {{ error }}
+</div>
+{% endif %}
+
+    {% if user_id %}
+    <div class="profile-card">
+
+        <div class="info-box">
+            <h2>User #{{ user_id }}</h2>
+            <div class="info-tags">
+                <span class="tag">{{ age }} years old</span>
+                <span class="tag">{{ gender }}</span>
+                <span class="tag">{{ occupation }}</span>
+                <span class="tag">{{ age_group }}</span>
+                <span class="tag">{{ country }}</span>
+            </div>
+        </div>
+
+        <div class="section-title">Activity Stats</div>
+        <div class="stats-grid">
+            <div class="stat-box">
+                <span class="stat-number">{{ total_movies }}</span>
+                <span class="stat-label">Movies Watched</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-number">{{ avg_rating }} ⭐</span>
+                <span class="stat-label">Avg Rating</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-number">{{ avg_completion }}</span>
+                <span class="stat-label">Avg Completion</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-number">{{ total_watch_time }} min</span>
+                <span class="stat-label">Watch Time</span>
+            </div>
+        </div>
+
+        <div class="section-title">Taste Profile</div>
+        <div class="taste-grid">
+            <div class="taste-box">
+                <p class="taste-label">Favourite Genres</p>
+                <div class="taste-tags">
+                    {% for g in liked_genres %}
+                        <span class="genre-tag">{{ g }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="taste-box">
+                <p class="taste-label">Favourite Actors</p>
+                <div class="taste-tags">
+                    {% for a in liked_actors %}
+                        <span class="actor-tag">{{ a }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="taste-box">
+                <p class="taste-label">Favourite Directors</p>
+                <div class="taste-tags">
+                    {% for d in liked_directors %}
+                        <span class="actor-tag">{{ d }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="taste-box">
+                <p class="taste-label">Preferred Decade</p>
+                <p class="taste-value">{{ preferred_decade }}s</p>
+            </div>
+            <div class="taste-box">
+                <p class="taste-label">Preferred Language</p>
+                <p class="taste-value">{{ preferred_language }}</p>
+            </div>
+            <div class="taste-box">
+                <p class="taste-label">Avg Runtime Tolerance</p>
+                <p class="taste-value">{{ avg_runtime }}</p>
+            </div>
+        </div>
+
+        <div class="section-title">Top Rated Movies</div>
+<div class="top-movies-list">
+    {% for movie in top_movies %}
+    <div class="mini-card">
+        <div class="mini-rating">⭐ {{ movie.rating }}</div>
+        <div class="mini-info">
+            <span class="mini-title">{{ movie.title }}
+                <span class="mini-year">({{ movie.year }})</span>
+            </span>
+            <div class="mini-genres">
+                {% for g in movie.genres %}<span class="genre-tag">{{ g }}</span>{% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+    </div>
+    {% endif %}
+
+</div>
+
+{% endblock %}

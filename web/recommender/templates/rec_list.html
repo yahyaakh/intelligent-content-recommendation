@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}User Recommendation List{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/rec_list.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="rec-form-container">
+    <h1 class="page-title">Get Recommendations</h1>
+    <form method="POST" action="/recommend/">
+        {% csrf_token %}
+        <div class="rec-form">
+            <div class="form-group">
+                <label for="user_id">User ID</label>
+                <input type="number" name="user_id" id="user_id"
+                       placeholder="Valid User ID , EG 1" min="1"
+                       value="{{ user_id|default:'' }}">
+            </div>
+
+            <div class="form-group">
+                <label for="algorithm">Algorithm</label>
+                <select name="algorithm" id="algorithm">
+                    <option value="hybrid" {% if algorithm == 'hybrid' %}selected{% endif %}>Hybrid</option>
+                    <option value="collaborative" {% if algorithm == 'collaborative' %}selected{% endif %}>Collaborative</option>
+                    <option value="content" {% if algorithm == 'content' %}selected{% endif %}>Content-Based</option>
+                    <option value="surprise" {% if algorithm == 'surprise' %}selected{% endif %}>SVD (Surprise)</option>
+                    <option value="popular" {% if algorithm == 'popular' %}selected{% endif %}>Popularity</option>
+                    <option value="ncf" {% if algorithm == 'ncf' %}selected{% endif %}>NCF (Neural)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="recommendations">Results</label>
+                <select name="recommendations" id="recommendations">
+                    <option value="5">5</option>
+                    <option value="10" {% if recommendations == 10 %}selected{% endif %}>10</option>
+                    <option value="15">15</option>
+                    <option value="20">20</option>
+                </select>
+            </div>
+
+            <button type="submit" class="submit-btn">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                Recommend
+            </button>
+            <button type="submit" name="compare" value="true" class="compare-btn">
+                <i class="fa-solid fa-chart-bar"></i>
+                Compare All Algorithms
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if error %}
+<div class="error-msg">
+    <p>{{ error }}</p>
+</div>
+{% endif %}
+{% if recommendations %}
+
+<div class="comparison-layout">
+
+    <!-- LEFT: what the user already likes -->
+    <div class="comparison-col">
+        <h3 class="col-title">User #{{ user_id }} Likes</h3>
+        <p class="col-subtitle">Their highest-rated movies</p>
+
+        {% for movie in top_movies %}
+        <div class="mini-card">
+            <div class="mini-rating">⭐ {{ movie.rating }}</div>
+            <div class="mini-info">
+                <span class="mini-title">{{ movie.title }}
+                    <span class="mini-year">({{ movie.year }})</span>
+                </span>
+                <div class="mini-genres">
+                    {% for g in movie.genres %}<span class="genre-tag">{{ g }}</span>{% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- RIGHT: what we recommend -->
+    <div class="comparison-col">
+        <h3 class="col-title">We Recommend
+            <span class="algo-badge">{{ algorithm }}</span>
+        </h3>
+        <p class="col-subtitle">Based on their taste</p>
+
+        {% for rec in recommendations %}
+        <div class="mini-card recommend">
+            <div class="mini-rank">#{{ forloop.counter }}</div>
+            <div class="mini-info">
+                <span class="mini-title">{{ rec.title }}
+                    <span class="mini-year">({{ rec.year }})</span>
+                </span>
+                <div class="mini-genres">
+                    {% for g in rec.genres_list %}<span class="genre-tag">{{ g }}</span>{% endfor %}
+                </div>
+                <p class="mini-explanation">
+                    <i class="fa-solid fa-lightbulb"></i> {{ rec.explanation }}
+                </p>
+            </div>
+            <div class="mini-score">{{ rec.vote_average|floatformat:1 }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+</div>
+
+{% endif %}
+
+{% if is_compare %}
+
+<h2 class="results-title">Algorithm Comparison for User #{{ user_id }}</h2>
+
+{% for algo, recs in compare_results.items %}
+<div class="compare-section">
+    <div class="compare-header">
+        <span class="algo-badge">{{ algo }}</span>
+        <span class="compare-count">{{ recs|length }} results</span>
+    </div>
+
+    {% for rec in recs %}
+    <div class="rec-card">
+        <div class="rec-rank">#{{ forloop.counter }}</div>
+        <div class="rec-info">
+            <h3 class="rec-title">{{ rec.title }}
+                <span class="rec-year">({{ rec.year }})</span>
+            </h3>
+            <div class="rec-genres">
+                {% for genre in rec.genres_list %}
+                    <span class="genre-tag">{{ genre }}</span>
+                {% endfor %}
+            </div>
+            <p class="rec-meta">
+                Dir: {{ rec.director }}
+                · {{ rec.runtime }} min
+                · {% for c in rec.cast_list %}{{ c }}{% if not forloop.last %}, {% endif %}{% endfor %}
+            </p>
+        </div>
+        <div class="rec-score">
+            <span class="score-number">{{ rec.vote_average|floatformat:1 }}</span>
+            <span class="score-label">TMDB</span>
+        </div>
+    </div>
+    {% empty %}
+    <p class="no-results">No results for this algorithm.</p>
+    {% endfor %}
+
+</div>
+{% endfor %}
+
+{% endif %}
+
+{% endblock %}

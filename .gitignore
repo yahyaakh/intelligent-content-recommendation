@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Data (too large for GitHub)
+data/
+ncf_saved/
+
+# Django
+web/db.sqlite3
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

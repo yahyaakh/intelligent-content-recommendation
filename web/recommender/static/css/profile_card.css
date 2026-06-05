@@ -1,0 +1,268 @@
+.profile-page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+.page-title {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    font-size: 1.8rem;
+    color: #e0e0e0;
+}
+
+/* ── Search Box ── */
+.search-box {
+    display: flex;
+    margin: 0 auto 2rem auto;
+    width: 500px;
+    max-width: 100%;
+    height: 55px;
+    border-radius: 100px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background-color: var(--bg-card);
+}
+
+.search-input {
+    flex: 1;
+    font-size: 16px;
+    color: #e0e0e0;
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0 1.2rem;
+}
+
+.search-input::placeholder {
+    color: var(--text-muted);
+}
+
+.search-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 55px;
+    background-color: var(--accent);
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    transition: background 0.2s;
+}
+
+.search-btn:hover {
+    background-color: #574fd6;
+}
+
+/* ── Profile Card ── */
+.profile-card {
+    background: rgba(26, 29, 39, 0.8);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2rem;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── User Info Header ── */
+.info-box {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.info-box h2 {
+    font-size: 1.6rem;
+    color: #ffffff;
+    margin-bottom: 0.8rem;
+}
+
+.info-tags {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.tag {
+    background-color: rgba(108, 99, 255, 0.15);
+    color: #a78bfa;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.85rem;
+}
+
+/* ── Section Titles ── */
+.section-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    margin: 1.5rem 0 0.8rem 0;
+}
+
+/* ── Stats Grid ── */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.stat-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.2rem 0.8rem;
+    text-align: center;
+}
+
+.stat-number {
+    display: block;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 0.3rem;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* ── Taste Grid ── */
+.taste-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.taste-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+}
+
+.taste-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.taste-value {
+    font-size: 1.1rem;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.taste-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.genre-tag {
+    background: rgba(108, 99, 255, 0.2);
+    color: #a78bfa;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+
+.actor-tag {
+    background: rgba(99, 200, 255, 0.12);
+    color: #7dd3fc;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .taste-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+.error-msg {
+    background: rgba(255, 80, 80, 0.1);
+    border: 1px solid rgba(255, 80, 80, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    color: #ff6b6b;
+    text-align: center;
+    margin: 1.5rem auto;
+    max-width: 500px;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+
+.top-movies-list {
+    margin-top: 0.5rem;
+}
+
+.mini-card {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.7rem;
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid transparent;
+    transition: border-color 0.15s;
+}
+
+.mini-card:hover {
+    border-color: var(--border);
+}
+
+.mini-rating {
+    color: #fbbf24;
+    font-weight: 700;
+    font-size: 0.9rem;
+    min-width: 50px;
+}
+
+.mini-info {
+    flex: 1;
+}
+
+.mini-title {
+    color: #ffffff;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.mini-year {
+    color: var(--text-muted);
+    font-weight: 400;
+    font-size: 0.8rem;
+}
+
+.mini-genres {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+}

@@ -14,6 +14,9 @@ from surprise import PredictionImpossible
 from surprise.model_selection import train_test_split
 from surprise import accuracy
 from collections import defaultdict
+from collections import Counter
+
+import pickle
 
 
 CHILD_UNSAFE_KEYWORDS = {
@@ -33,6 +36,7 @@ CHILD_UNSAFE_KEYWORDS = {
     'pedophilia', 'pedophile', 'underage sex', 'eroticism',
     'adultery', 'infidelity', 'transvestism', 'transsexuality',
     'masturbation', 'erotic', 'femme fatale', 'lust',
+
 
     # Drugs & Substance Abuse
     'drug dealer', 'drug crime', 'drug trafficking', 'drug abuse',
@@ -304,48 +308,227 @@ class SurpriseRecommender:
         top_movie_ids = [mid for mid,_ in predictions[:n]]
         return top_movie_ids
 
+
+class NCFRecommender:
+    """
+    Neural Collaborative Filtering (NeuMF) recommender.
+    Trains once and saves to disk. Loads the saved model on subsequent runs
+    to avoid the ~50 min retraining cost.
+    """
+    def __init__(self, interactions_df, movies_df, model_dir='ncf_saved',
+                 epochs=30, force_retrain=False):
+        self.interactions_df = interactions_df.copy()
+        self.movies_df = movies_df.copy()
+        self.model_dir = model_dir
+        self.epochs = epochs
+        self.model = None
+        self.user2id = {}
+        self.item2id = {}
+        self.n_users = 0
+        self.n_items = 0
+
+        mappings_path = os.path.join(model_dir, 'mappings.pkl')
+
+        if os.path.exists(mappings_path) and not force_retrain:
+            print("Loading saved NCF model...")
+            self._load()
+        else:
+            print("Training NCF model (first run, may take ~50 min)...")
+            self._train_and_save()
+
+    def _prepare_data(self):
+        return self.interactions_df.rename(
+            columns={'user_id': 'userID', 'movie_id': 'itemID'}
+        )
+
+    def _train_and_save(self):
+        from recommenders.models.ncf.ncf_singlenode import NCF
+        from recommenders.models.ncf.dataset import Dataset as NCFDataset
+        from recommenders.datasets.python_splitters import python_random_split
+        from recommenders.utils.constants import SEED as DEFAULT_SEED
+
+        data = self._prepare_data()
+        train, test = python_random_split(data, ratio=0.75, seed=DEFAULT_SEED)
+
+        train_users = set(train['userID'].unique())
+        train_items = set(train['itemID'].unique())
+        test = test[test['userID'].isin(train_users) & test['itemID'].isin(train_items)]
+
+        for f in ['ncf_train.csv', 'ncf_test.csv', 'ncf_test_full.csv']:
+            if os.path.exists(f):
+                os.remove(f)
+
+        train.sort_values('userID').to_csv('ncf_train.csv', index=False)
+        test.sort_values('userID').to_csv('ncf_test.csv', index=False)
+
+        dataset = NCFDataset(train_file='ncf_train.csv', test_file='ncf_test.csv',
+                             seed=DEFAULT_SEED)
+
+        self.model = NCF(
+            n_users=dataset.n_users, n_items=dataset.n_items,
+            model_type="NeuMF", n_factors=4, layer_sizes=[16, 8, 4],
+            n_epochs=self.epochs, batch_size=256, learning_rate=1e-3,
+            verbose=1, seed=DEFAULT_SEED
+        )
+        self.model.fit(dataset)
+
+        self.user2id = self.model.user2id
+        self.item2id = self.model.item2id
+        self.n_users = dataset.n_users
+        self.n_items = dataset.n_items
+
+        os.makedirs(self.model_dir, exist_ok=True)
+        self.model.save(dir_name=self.model_dir)
+
+        # save mappings and the held-out test set (for evaluation)
+        with open(os.path.join(self.model_dir, 'mappings.pkl'), 'wb') as f:
+            pickle.dump({
+                'user2id': self.user2id, 'item2id': self.item2id,
+                'n_users': self.n_users, 'n_items': self.n_items,
+            }, f)
+        test.to_csv(os.path.join(self.model_dir, 'test.csv'), index=False)
+
+        for f in ['ncf_train.csv', 'ncf_test.csv', 'ncf_test_full.csv']:
+            if os.path.exists(f):
+                os.remove(f)
+
+        print("NCF model trained and saved.")
+
+    def _load(self):
+        from recommenders.models.ncf.ncf_singlenode import NCF
+
+        with open(os.path.join(self.model_dir, 'mappings.pkl'), 'rb') as f:
+            m = pickle.load(f)
+
+        self.user2id = m['user2id']
+        self.item2id = m['item2id']
+        self.n_users = m['n_users']
+        self.n_items = m['n_items']
+
+        self.model = NCF(
+            n_users=self.n_users, n_items=self.n_items,
+            model_type="NeuMF", n_factors=4, layer_sizes=[16, 8, 4],
+            n_epochs=self.epochs, batch_size=256, learning_rate=1e-3,
+            verbose=0, seed=42
+        )
+        self.model.load(neumf_dir=self.model_dir)
+
+        # restore the id mappings onto the model so predict() works
+        self.model.user2id = self.user2id
+        self.model.item2id = self.item2id
+        self.model.id2user = {v: k for k, v in self.user2id.items()}
+        self.model.id2item = {v: k for k, v in self.item2id.items()}
+
+        print("NCF model loaded.")
+
+    def get_user_recommendations(self, user_id, n=10):
+        if user_id not in self.user2id:
+            return []
+
+        all_items = list(self.item2id.keys())
+        watched = set(self.interactions_df[
+            self.interactions_df['user_id'] == user_id]['movie_id'])
+        candidates = [item for item in all_items if item not in watched]
+
+        if not candidates:
+            return []
+
+        user_list = [user_id] * len(candidates)
+        preds = self.model.predict(user_list, candidates, is_list=True)
+
+        scored = sorted(zip(candidates, preds), key=lambda x: x[1], reverse=True)
+        return [int(mid) for mid, _ in scored[:n]]
+
+
+
+
+
+
+
+
+
+
+
+
+
 class HybridRecommenderEnhanced:
-    def __init__(self, content_rec, collab_rec, movies_df, users_df, interactions_df, rec_system):
+    def __init__(self, content_rec, collab_rec, movies_df, users_df, interactions_df, rec_system , surprise_rec):
         self.content_rec = content_rec
         self.collab_rec = collab_rec
         self.movies_df = movies_df
         self.users_df = users_df
         self.interactions_df = interactions_df
         self.rec_system = rec_system
+
+        self.surprise_rec = surprise_rec
+
     def get_hybrid_recommendations(self, user_id, n=10):
         recommendations = {}
-        user_movies = self.interactions_df[self.interactions_df['user_id']==user_id]
-        if len(user_movies)==0:
+        user_movies = self.interactions_df[self.interactions_df['user_id'] == user_id]
+
+        # cold start — new user
+        if len(user_movies) == 0:
             return self.rec_system.get_popular_movies(n)
-        user_fav = user_movies[user_movies['rating']>=4]['movie_id'].tolist()
-        for mid in user_fav[:3]:
-            similar_movies = self.content_rec.get_similar_movies(mid,5)
-            for movie in similar_movies:
-                if movie['movie_id'] not in recommendations:
-                    recommendations[movie['movie_id']] = {'content_score':0,'collab_score':0,'movie_info':movie}
-                recommendations[movie['movie_id']]['content_score'] +=1
-        collab_recs = self.collab_rec.get_user_recommendations(user_id,10)
-        for i,movie_id in enumerate(collab_recs):
-            if movie_id not in recommendations:
-                movie_info = self.movies_df[self.movies_df['movie_id']==movie_id].iloc[0]
-                recommendations[movie_id] = {'content_score':0,'collab_score':0,'movie_info':movie_info.to_dict()}
-            recommendations[movie_id]['collab_score'] = 10 - i
-        for movie_id, scores in recommendations.items():
-            scores['hybrid_score'] = 0.4 * scores['content_score'] + 0.6 * scores['collab_score']
-        sorted_recs = sorted(recommendations.items(), key=lambda x:x[1]['hybrid_score'], reverse=True)
+
+        # personal mean threshold instead of fixed >= 4
+        user_mean = user_movies['rating'].mean()
+        user_fav = user_movies[user_movies['rating'] >= user_mean]['movie_id'].tolist()
+
+        # fallback if still empty
+        if not user_fav:
+            user_fav = user_movies.nlargest(3, 'rating')['movie_id'].tolist()
+
+        # get 20 candidates from collaborative
+        collab_recs = self.collab_rec.get_user_recommendations(user_id, 20)
+
+        # ONE loop — both signals calculated and stored together
+        for i, movie_id in enumerate(collab_recs):
+
+            # collab signal — normalized 0.0 to 1.0
+            collab_score = 20 - i
+            collab_normalized = collab_score / 20
+
+            # svd signal — normalized 0.0 to 1.0
+            pred = self.surprise_rec.algo.predict(int(user_id), int(movie_id))
+            svd_normalized = (pred.est - 1) / 4
+
+            # blend — both signals on equal footing
+            hybrid_score = 0.4 * svd_normalized + 0.6 * collab_normalized
+
+            # store everything
+            movie_info = self.movies_df[self.movies_df['movie_id'] == movie_id]
+            if not movie_info.empty:
+                recommendations[movie_id] = {
+                    'hybrid_score': hybrid_score,
+                    'svd_normalized': svd_normalized,
+                    'collab_normalized': collab_normalized,
+                    'movie_info': movie_info.iloc[0].to_dict()
+                }
+
+        # sort by hybrid score descending
+        sorted_recs = sorted(
+            recommendations.items(),
+            key=lambda x: x[1]['hybrid_score'],
+            reverse=True
+        )
+
         seen = set(user_movies['movie_id'].tolist())
         final = []
-        for mid,data in sorted_recs:
-            if mid not in seen and len(final)<n:
+
+        for mid, data in sorted_recs:
+            if mid not in seen and len(final) < n:
                 final.append(data['movie_info'])
-        if len(final)<n:
-            needed = n-len(final)
+
+        # fallback to popular if not enough results
+        if len(final) < n:
+            needed = n - len(final)
             popular = self.rec_system.get_popular_movies(needed)
             for pm in popular:
                 if pm['movie_id'] not in {m['movie_id'] for m in final}:
                     final.append(pm)
-                    if len(final)==n:
+                    if len(final) == n:
                         break
+
         return final
 
 class RecommendationEvaluator:
@@ -379,8 +562,25 @@ class RecommendationEvaluator:
             num_users += 1
         return ap_sum/num_users if num_users>0 else 0.
     def evaluate_user_recommendations(self, user_id, recommended_movies, threshold=3.0, max_k=20):
+
+        # threshold parameter kept for API compatibility
+        # personal mean is used instead of global threshold
+
+        # The threshold : is the minimum rating a movie needs to count as something the user actually liked.
+        # Every movie the user rated at or above the threshold becomes a relevant item the ground truth of what we should be recommending.
         user_interactions = self.interactions_df[self.interactions_df['user_id']==user_id]
-        relevant_items = user_interactions[user_interactions['rating']>=threshold]['movie_id'].tolist()
+
+        # global threshold — same for everyone: which is an issue
+        # relevant_items = user_interactions[user_interactions['rating']>=threshold]['movie_id'].tolist()
+
+        # solution
+
+        # personal threshold — relative to each user's rating style
+        user_mean = user_interactions['rating'].mean()
+        relevant_items = user_interactions[
+            user_interactions['rating'] >= user_mean
+            ]['movie_id'].tolist()
+
         if not recommended_movies:
             return {f'precision@{k}':0 for k in (5,10,max_k)} | {f'recall@{k}':0 for k in (5,10,max_k)} | {'relevant_items_count':len(relevant_items)}
         recommended_items = [int(m['movie_id']) if isinstance(m,dict) else int(m) for m in recommended_movies]
@@ -404,7 +604,8 @@ class RecommendationEvaluator:
 
 
 class MovieRecommenderCLI:
-    def __init__(self, hybrid_rec, movies_df, users_df, interactions_df, evaluator, surprise_rec=None , constraint_layer=None):
+    def __init__(self, hybrid_rec, movies_df, users_df, interactions_df, evaluator,
+                 surprise_rec=None, constraint_layer=None, ncf_rec=None):
         self.hybrid_rec = hybrid_rec
         self.movies_df = movies_df
         self.users_df = users_df
@@ -412,6 +613,40 @@ class MovieRecommenderCLI:
         self.evaluator = evaluator
         self.surprise_rec = surprise_rec
         self.constraint_layer = constraint_layer
+        self.ncf_rec = ncf_rec
+
+    def get_recommendations_from_movies(self, movie_ratings, n=10):
+        """
+        Cold-start recommendations from a list of (movie_id, rating) pairs.
+        Uses content-based similarity, weighted by the user's rating of each seed movie.
+        movie_ratings: list of dicts [{'movie_id': 123, 'rating': 5}, ...]
+        """
+        seed_ids = {int(m['movie_id']) for m in movie_ratings}
+        scores = {}
+
+        for entry in movie_ratings:
+            mid = int(entry['movie_id'])
+            rating = float(entry.get('rating', 5))
+            weight = rating / 5.0  # normalise rating to 0-1 as a weight
+
+            similar = self.hybrid_rec.content_rec.get_similar_movies(mid, 20)
+            for rank, sim in enumerate(similar):
+                sim_id = sim['movie_id']
+                if sim_id in seed_ids:
+                    continue
+                # closer matches (higher rank) score more, scaled by the seed's rating
+                rank_score = (20 - rank) / 20
+                scores[sim_id] = scores.get(sim_id, 0) + rank_score * weight
+
+        # sort by aggregated score
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        results = []
+        for sim_id, _ in ranked[:n]:
+            row = self.movies_df[self.movies_df['movie_id'] == sim_id]
+            if not row.empty:
+                results.append(row.iloc[0].to_dict())
+        return results
 
     def simulate_watching(self, user_id, movie_id, rating=None, watch_duration=None):
         if rating is None:
@@ -453,8 +688,10 @@ class MovieRecommenderCLI:
 
             watched_movies = user_ratings.merge(self.movies_df, on='movie_id', how='inner')
 
-            # only add movies with ratings of 4 or more
-            liked_movies = watched_movies[watched_movies["rating"] >= 4]
+
+            # get liked movies using the mean of each user
+            user_mean = watched_movies['rating'].mean()
+            liked_movies = watched_movies[watched_movies["rating"] >= user_mean]
 
             # all genres user watched
             all_watched_genres = set()
@@ -462,12 +699,25 @@ class MovieRecommenderCLI:
                 for g in genre_string.split('|'):
                     all_watched_genres.add(g.strip())
 
-            liked_genres = set()
+            # favourite genres — top 5 most frequent across liked movies
+            genre_counts = Counter()
             for genre_string in liked_movies['genres'].dropna():
                 for g in genre_string.split('|'):
-                    liked_genres.add(g.strip())
+                    genre_counts[g.strip()] += 1
+            liked_genres = set(g for g, _ in genre_counts.most_common(5))
 
-            liked_directors = set(liked_movies['director'].tolist())
+            # favourite directors — top 3 most frequent across liked movies
+            director_counts = Counter()
+            for director in liked_movies['director'].dropna():
+                director_counts[director.strip()] += 1
+            liked_directors = set(d for d, _ in director_counts.most_common(3))
+
+            actor_counts = Counter()
+            for cast_string in liked_movies['cast'].dropna():
+                for actor in cast_string.split('|'):
+                    actor_counts[actor.strip()] += 1
+
+            top_actors = [actor for actor, _ in actor_counts.most_common(8)]
 
             liked_movies['decade'] = (liked_movies['year'] // 10) * 10
             preferred_decade = liked_movies['decade'].mode().iloc[0] if not liked_movies.empty else 1990
@@ -484,40 +734,71 @@ class MovieRecommenderCLI:
 
             return {
                 'user_id': user_id,
-                'age': user_age,  # ← add this
+                'age': user_age,
                 'all_watched_genres': all_watched_genres,  # for hard constraint
                 'liked_genres': liked_genres,  # for soft constraint
                 'liked_directors': liked_directors,  # for soft constraint
                 'preferred_decade': preferred_decade,  # for soft constraint
                 'preferred_language': preferred_language,  # for hard constraint
                 'avg_runtime': avg_runtime,  # for contextual constraint
-                'n_ratings': len(user_ratings)  # for sparse user detection
+                'n_ratings': len(user_ratings),  # for sparse user detection
+                'liked_actors': top_actors, # new , added to experiment with the constraint layer and improve accuracy
             }
 
     def get_user_recommendations(self, user_id, algorithm='hybrid', n=10):
+        # --- Step 0: Global Seen Filter Setup ---
+        user_movies = self.interactions_df[self.interactions_df['user_id'] == user_id]
+        seen_movie_ids = set(user_movies['movie_id'].tolist())
+
+        # Fetch extra candidates to account for movies we will filter out
+        fetch_limit = n + len(seen_movie_ids) + 20
+
         # --- Step 1: Get raw recommendations from whichever algorithm ---
         if algorithm == 'hybrid':
+            # Hybrid already handles internal filtering safely
             recs = self.hybrid_rec.get_hybrid_recommendations(user_id, n)
+
         elif algorithm == 'collaborative':
-            movie_ids = self.hybrid_rec.collab_rec.get_user_recommendations(user_id, n)
-            recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
-                    for mid in movie_ids
-                    if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
-        elif algorithm == 'content':
-            user_movies = self.interactions_df[self.interactions_df['user_id'] == user_id]
-            if user_movies.empty:
-                recs = self.hybrid_rec.rec_system.get_popular_movies(n)
-            else:
-                fav_movie = user_movies.loc[user_movies['rating'].idxmax(), 'movie_id']
-                recs = self.hybrid_rec.content_rec.get_similar_movies(fav_movie, n)
-        elif algorithm == 'popular':
-            recs = self.hybrid_rec.rec_system.get_popular_movies(n)
-        elif algorithm == 'surprise' and self.surprise_rec:
-            movie_ids = self.surprise_rec.get_user_recommendations(user_id, n)
+            movie_ids = self.hybrid_rec.collab_rec.get_user_recommendations(user_id, fetch_limit)
+            # Universal safety filter
+            movie_ids = [mid for mid in movie_ids if mid not in seen_movie_ids][:n]
             recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
                     for mid in movie_ids
                     if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
 
+        elif algorithm == 'content':
+            if user_movies.empty:
+                raw_recs = self.hybrid_rec.rec_system.get_popular_movies(fetch_limit)
+            else:
+                fav_movie = user_movies.loc[user_movies['rating'].idxmax(), 'movie_id']
+                raw_recs = self.hybrid_rec.content_rec.get_similar_movies(fav_movie, fetch_limit)
+            # Universal safety filter
+            recs = [m for m in raw_recs if m['movie_id'] not in seen_movie_ids][:n]
+
+        elif algorithm == 'popular':
+            raw_recs = self.hybrid_rec.rec_system.get_popular_movies(fetch_limit)
+            # Universal safety filter
+            recs = [m for m in raw_recs if m['movie_id'] not in seen_movie_ids][:n]
+
+        elif algorithm == 'surprise' and self.surprise_rec:
+            movie_ids = self.surprise_rec.get_user_recommendations(user_id, fetch_limit)
+            # Universal safety filter
+            movie_ids = [mid for mid in movie_ids if mid not in seen_movie_ids][:n]
+            recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
+                    for mid in movie_ids
+                    if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
+
+        elif algorithm == 'ncf' and self.ncf_rec:
+            movie_ids = self.ncf_rec.get_user_recommendations(user_id, fetch_limit)
+            # Universal safety filter
+            movie_ids = [mid for mid in movie_ids if mid not in seen_movie_ids][:n]
+            recs = [self.movies_df[self.movies_df['movie_id'] == mid].iloc[0].to_dict()
+                    for mid in movie_ids
+                    if not self.movies_df[self.movies_df['movie_id'] == mid].empty]
+        else:
+            recs = []
+
+        # --- Step 2: Enrich with full movie data ---
         enriched = []
         for movie in recs:
             movie_id = movie.get('movie_id')
@@ -569,7 +850,9 @@ class MovieRecommenderCLI:
             'liked_directors': sorted(constraint_profile['liked_directors']),
             'preferred_decade': constraint_profile['preferred_decade'],
             'preferred_language': constraint_profile['preferred_language'],
-            'avg_runtime_tolerance': f"{constraint_profile['avg_runtime']:.0f} min"
+            'avg_runtime_tolerance': f"{constraint_profile['avg_runtime']:.0f} min",
+            'liked_actors': sorted(constraint_profile['liked_actors'])  # new
+
         }
 
         return {
@@ -586,18 +869,55 @@ class MovieRecommenderCLI:
         for i, movie in enumerate(movies, 1):
             print(f"{i}. {movie['title']} ({movie['year']}) - Genres: {movie['genres']} | Director: {movie['director']}")
 
-
-
+# In production, a recommendation system trains on past behaviour and recommends for the future.
+# Temporal split mirrors this exactly. Random split does not mirror anything real —
+# no system trains and tests on randomly shuffled past events simultaneously.
     def evaluate_surprise_metrics(self, k=10, threshold=3.0):
         print("\nEvaluating Surprise SVD algorithm metrics...")
     
-        reader = Reader(rating_scale=(1, 5))
-        data = Dataset.load_from_df(self.interactions_df[['user_id', 'movie_id', 'rating']], reader)
+        # reader = Reader(rating_scale=(1, 5))
+        # data = Dataset.load_from_df(self.interactions_df[['user_id', 'movie_id', 'rating']], reader)
+
+        # use frozen copy
+        df = self.interactions_df.copy()
+        df['date'] = pd.to_datetime(df['timestamp'] , unit='s' , errors='coerce')
+        df = df.dropna(subset=['date']) # drop null dates
     
-        trainset, testset = train_test_split(data, test_size=0.2, random_state=42)
+        # trainset, testset = train_test_split(data, test_size=0.2, random_state=42)
+
+        #2. Split by cutoff 2017-01-01:
+        # train_df = all ratings before 2017
+        # test_df  = all ratings from 2017 onwards
+
+        cutoff = pd.Timestamp('2017-01-01')
+        train_df = df[df['date'] < cutoff]
+        test_df = df[df['date'] >= cutoff]
+
+        train_users = set(train_df['user_id'].unique())
+        test_df = test_df[test_df['user_id'].isin(train_users)]
+
+        print(f"Train ratings:                {len(train_df):,}")
+        print(f"Test ratings (known users):   {len(test_df):,}")
+
+
         algo = SVD(n_epochs=15, random_state=42)
+
+        reader = Reader(rating_scale=(1, 5))
+        train_data = Dataset.load_from_df(
+            train_df[['user_id', 'movie_id', 'rating']], reader
+        )
+        trainset = train_data.build_full_trainset()
         algo.fit(trainset)
-        predictions = algo.test(testset)
+
+        # build predictions manually from test_df
+        predictions = [
+            algo.predict(uid, mid, r_ui=r)
+            for uid, mid, r in zip(
+                test_df['user_id'],
+                test_df['movie_id'],
+                test_df['rating']
+            )
+        ]
     
         rmse = accuracy.rmse(predictions, verbose=False)
         mae = accuracy.mae(predictions, verbose=False)
@@ -605,10 +925,15 @@ class MovieRecommenderCLI:
         # Prepare for ranking metrics
         user_recs = defaultdict(list)
         user_true = defaultdict(set)
-    
+
+        # build personal mean per user from training data
+        user_mean_ratings = train_df.groupby('user_id')['rating'].mean().to_dict()
+
+        # then use personal threshold instead of global
         for pred in predictions:
             user_recs[pred.uid].append((pred.iid, pred.est))
-            if pred.r_ui >= threshold:
+            personal_threshold = user_mean_ratings.get(pred.uid, threshold)
+            if pred.r_ui >= personal_threshold:
                 user_true[pred.uid].add(pred.iid)
     
         precision_list, recall_list, ndcg_list = [], [], []
@@ -640,6 +965,61 @@ class MovieRecommenderCLI:
         print(f"Recall@{k:<3}    : {avg_recall:.4f}")
         print(f"NDCG@{k:<3}      : {avg_ndcg:.4f}")
 
+    def evaluate_ncf_metrics(self, k=10):
+        if not self.ncf_rec:
+            print("NCF recommender not available.")
+            return
+
+        from recommenders.evaluation.python_evaluation import (
+            map as ncf_map, ndcg_at_k as ncf_ndcg,
+            precision_at_k as ncf_prec, recall_at_k as ncf_recall
+        )
+
+        print("\nEvaluating NCF (NeuMF) metrics...")
+
+        test = pd.read_csv(os.path.join(self.ncf_rec.model_dir, 'test.csv'))
+        model = self.ncf_rec.model
+
+        # reconstruct the training set: full interactions minus the test rows
+        full = self.ncf_rec.interactions_df.rename(
+            columns={'user_id': 'userID', 'movie_id': 'itemID'})
+        test_keys = set(zip(test['userID'], test['itemID']))
+        train_mask = [(u, i) not in test_keys
+                      for u, i in zip(full['userID'], full['itemID'])]
+        train = full[train_mask]
+
+        train_items = list(self.ncf_rec.item2id.keys())
+        eval_users = np.random.choice(list(self.ncf_rec.user2id.keys()),
+                                      size=min(500, len(self.ncf_rec.user2id)),
+                                      replace=False)
+
+        users, items, preds = [], [], []
+        for user in eval_users:
+            user_list = [user] * len(train_items)
+            users.extend(user_list)
+            items.extend(train_items)
+            preds.extend(list(model.predict(user_list, train_items, is_list=True)))
+
+        all_predictions = pd.DataFrame({'userID': users, 'itemID': items, 'prediction': preds})
+
+        # KEY STEP: remove movies the user already watched in training
+        merged = pd.merge(train[['userID', 'itemID', 'rating']], all_predictions,
+                          on=['userID', 'itemID'], how='outer')
+        all_predictions = merged[merged.rating.isnull()].drop('rating', axis=1)
+
+        test_eval = test[test['userID'].isin(eval_users)]
+
+        m = ncf_map(test_eval, all_predictions, col_prediction='prediction', k=k)
+        nd = ncf_ndcg(test_eval, all_predictions, col_prediction='prediction', k=k)
+        pr = ncf_prec(test_eval, all_predictions, col_prediction='prediction', k=k)
+        rc = ncf_recall(test_eval, all_predictions, col_prediction='prediction', k=k)
+
+        print("\nNCF (NeuMF) performance metrics:")
+        print(f"MAP          : {m:.4f}")
+        print(f"NDCG@{k:<3}      : {nd:.4f}")
+        print(f"Precision@{k:<2}   : {pr:.4f}")
+        print(f"Recall@{k:<3}    : {rc:.4f}")
+
     def run_cli(self):
         print("\nWelcome to the Movie Recommendation CLI!")
         while True:
@@ -652,7 +1032,8 @@ class MovieRecommenderCLI:
             print("6. Evaluate recommendation quality")
             print("7. Show popular movies")
             print("8. Exit")
-            print("9. Evaluate Surprise algorithm metrics")  
+            print("9. Evaluate Surprise algorithm metrics")
+            print("10. Evaluate NCF (NeuMF) metrics")
             choice = input("Select an option (1-9): ").strip()
 
             if choice == '1':
@@ -703,11 +1084,14 @@ class MovieRecommenderCLI:
                 print(f"    Avg runtime:        {t['avg_runtime_tolerance']}")
                 print(f"    Liked genres:       {', '.join(t['liked_genres'])}")
                 print(f"    Liked directors:    {', '.join(t['liked_directors'])}")
+                print(f"    Liked actors:        {', '.join(t['liked_actors'])}")
+
                 print(f"{'=' * 50}")
 
             elif choice == '5':  # Compare recommendation algorithms
                 user_id = int(input("User ID: "))
-                algorithms = ['hybrid', 'collaborative', 'content', 'popular', 'surprise']
+                algorithms = ['hybrid', 'collaborative', 'content', 'popular', 'surprise', 'ncf']
+
                 print(f"\n=== Comparing Recommendations for User {user_id} ===")
                 for algo in algorithms:
                     try:
@@ -718,21 +1102,57 @@ class MovieRecommenderCLI:
                     except Exception as e:
                         print(f"  Could not get {algo} recommendations: {e}")
 
-            elif choice == '6':  # Evaluate recommendation quality
-                user_id_input = input("Enter User ID to see recommendation comparison (or press Enter to skip): ").strip()
+
+            elif choice == '6':
+
+                user_id_input = input("Enter User ID (or press Enter to skip): ").strip()
+
                 if user_id_input:
+
                     user_id = int(user_id_input)
-                    algorithms = ['hybrid', 'collaborative', 'content', 'popular', 'surprise']
-                    print(f"\n=== Side-by-side Recommendations Comparison for User {user_id} ===")
-                    for algo in algorithms:
-                        try:
-                            recs = self.get_user_recommendations(user_id, algo, 5)
-                            print(f"\n{algo.upper()} RECOMMENDATIONS:")
-                            for i, movie in enumerate(recs, 1):
-                                print(f"  {i}. {movie['title']} ({movie['year']}) - {movie['genres']}")
-                        except Exception as e:
-                            print(f"  Could not get {algo} recommendations: {e}")
-                print("TBD)")
+
+                    print(f"\n--- Constraint Analysis for User {user_id} ---")
+
+                    # get a large candidate pool to analyse
+                    all_recs_raw = self.hybrid_rec.get_hybrid_recommendations(user_id, 30)
+
+                    # enrich with full movie data
+                    enriched = []
+                    for movie in all_recs_raw:
+                        full = self.movies_df[self.movies_df['movie_id'] == movie.get('movie_id')]
+                        enriched.append(full.iloc[0].to_dict() if not full.empty else movie)
+
+
+                    # apply constraints and measure
+                    user_profile = self.build_constraint_profile(user_id)
+                    filtered = self.constraint_layer.apply_hard_constraints(enriched, user_profile)
+                    reranked = self.constraint_layer.apply_soft_constraints(filtered, user_profile)
+
+                    # constraint satisfaction rate
+                    survived = len(filtered)
+                    removed = len(enriched) - survived
+                    csr = survived / len(enriched) * 100 if enriched else 0
+
+                    # soft constraint lift
+                    if reranked and 'soft_score' in reranked[0]:
+                        scores = [m['soft_score'] for m in reranked]
+                        avg_score = sum(scores) / len(scores)
+                        top_score = max(scores)
+                        boosted = [m for m in reranked if m.get('soft_score', 1.0) > 1.0]
+                    else:
+                        avg_score = top_score = 0
+                        boosted = []
+
+                    print(f"  Candidates evaluated:      {len(enriched)}")
+                    print(f"  Passed hard constraints:   {survived}  ({csr:.1f}% satisfaction rate)")
+                    print(f"  Removed by hard constraints: {removed}")
+                    print(f"  Boosted by soft constraints: {len(boosted)}")
+                    print(f"  Avg soft score:            {avg_score:.3f}")
+                    print(f"  Top soft score:            {top_score:.3f}")
+                    print(f"  User age:                  {user_profile['age']}")
+                    print(f"  Runtime ceiling:           {user_profile['avg_runtime'] * 1.5:.0f} min")
+                    print(f"\n  Note: Precision/Recall metrics are reported via option 9")
+                    print(f"        (temporal evaluation: train pre-2017, test 2017-2019)")
             
 
             elif choice == '7':  # Show popular movies
@@ -746,8 +1166,13 @@ class MovieRecommenderCLI:
             elif choice == '8' or choice.lower() == 'exit':
                 print("Exiting CLI. Goodbye!")
                 break
+            elif choice == '10':
+                self.evaluate_ncf_metrics()
+
             else:
                 print("Invalid choice, please try again.")
+
+
 
 
 class ConstraintLayer:
@@ -766,6 +1191,16 @@ class ConstraintLayer:
 
           if movie['director'] in user_profile['liked_directors']:
               score *= 1.3
+
+          # actor boost
+          movie_cast = set(str(movie.get('cast', '')).split('|'))
+          liked_cast_overlap = movie_cast.intersection(user_profile['liked_actors'])
+          if liked_cast_overlap:
+              score *= (1 + 0.15 * len(liked_cast_overlap))
+              # 15% boost per liked actor appearing in the film
+              # max boost: 1.45 if all 3 cast members are liked actors
+              print(f"  [Actor boost] {movie['title']} — "
+                    f"matched: {liked_cast_overlap} — score: {score:.3f}")
 
           movie_decade = (movie['year'] // 10) * 10
           if movie_decade == user_profile['preferred_decade']:
@@ -790,8 +1225,6 @@ class ConstraintLayer:
       #     print(f"  {m['title']} — score: {m['soft_score']}")
 
       return scored_movies
-
-
 
 
 
@@ -861,9 +1294,19 @@ class ConstraintLayer:
 
 def main():
     print("Loading datasets...")
+
+
     movies_df = pd.read_csv('data/data/processed/movies.csv')
     users_df = pd.read_csv('data/data/processed/users.csv')
     interactions_df = pd.read_csv('data/data/processed/ratings.csv')
+
+    interactions_df = interactions_df.drop_duplicates(
+        subset=['user_id', 'movie_id'],
+        keep='last'  # keep most recent rating if duplicated
+    )
+
+    print(f"Ratings after dedup: {len(interactions_df)}")
+
     print(f"Users: {len(users_df)}; Movies: {len(movies_df)}")
     
     # print("1. Generating dense interactions...")
@@ -877,9 +1320,12 @@ def main():
     
     print("4. Initializing Base Recommendation System...")
     rec_system = MovieRecommendationSystem(movies_df, users_df, interactions_df)
+
+    surprise_rec = SurpriseRecommender(interactions_df)
+
     
     print("5. Initializing Enhanced Hybrid Recommender...")
-    hybrid_rec = HybridRecommenderEnhanced(content_rec, collab_rec, movies_df, users_df, interactions_df, rec_system)
+    hybrid_rec = HybridRecommenderEnhanced(content_rec, collab_rec, movies_df, users_df, interactions_df, rec_system, surprise_rec)
     
     print("6. Diagnosing User-Movie Matrix...")
     diagnose_user_movie_matrix(collab_rec)
@@ -888,7 +1334,6 @@ def main():
     evaluator = RecommendationEvaluator(interactions_df, movies_df)
     
     print("8. Initializing Surprise Recommender (SVD)...")
-    surprise_rec = SurpriseRecommender(interactions_df)
 
     print("9. Launching CLI...")
     constraint_layer = ConstraintLayer(movies_df)
@@ -897,10 +1342,40 @@ def main():
 
     print("10. Initializing Constraint Layer...")
 
+    print("11. Initializing NCF Recommender (NeuMF)...")
+    ncf_rec = NCFRecommender(interactions_df, movies_df, epochs=30)
+
+    cli = MovieRecommenderCLI(hybrid_rec, movies_df, users_df, interactions_df,
+                              evaluator, surprise_rec, constraint_layer, ncf_rec)
 
 
+    movies_df = pd.read_csv('data/data/processed/movies.csv')
+    ratings_df = pd.read_csv('data/data/processed/ratings.csv')
+
+    # find which movies actually have ratings
+    rated_ids = set(ratings_df['movie_id'].unique())
+    rated_movies = movies_df[movies_df['movie_id'].isin(rated_ids)]
+    unrated_movies = movies_df[~movies_df['movie_id'].isin(rated_ids)]
+
+    print(f"Movies WITH ratings:    {len(rated_movies)}")
+    print(f"Movies WITHOUT ratings: {len(unrated_movies)}")
+    print(f"\nYear range of rated movies:")
+    print(f"  Oldest: {rated_movies['year'].min()}")
+    print(f"  Newest: {rated_movies['year'].max()}")
+    print(f"\nYear range of unrated movies:")
+    print(f"  Oldest: {unrated_movies['year'].min()}")
+    print(f"  Newest: {unrated_movies['year'].max()}")
+
+
+    rated_movies['year'] = pd.to_numeric(rated_movies['year'], errors='coerce')
+    decade_counts = (rated_movies['year'] // 10 * 10).value_counts().sort_index()
+    print(f"\nRated movies by decade:")
+    print(decade_counts.to_string())
 
     cli.run_cli()
+
+
+
 
 
 if __name__ == "__main__":

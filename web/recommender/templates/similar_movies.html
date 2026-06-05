@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Similar Movies{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/similar_movies.css' %}">
+{% endblock %}
+
+{% block content %}
+
+<div class="similar-page">
+    <h1 class="page-title">Find Similar Movies</h1>
+
+    <form method="POST" action="/similar/">
+        {% csrf_token %}
+        <div class="search-box">
+            <input class="search-input" type="text" name="query"
+                   placeholder="Enter a movie name or ID (e.g. Star Wars)">
+            <button class="search-btn" type="submit">
+                <i class="fa-solid fa-magnifying-glass"></i>
+            </button>
+        </div>
+    </form>
+
+    {% if error %}
+    <div class="error-msg">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        {{ error }}
+    </div>
+    {% endif %}
+
+    {% if source %}
+    <div class="source-card">
+        <div class="source-label">You searched for</div>
+        <h2 class="source-title">{{ source.title }}
+            <span class="source-year">({{ source.year }})</span>
+        </h2>
+        <div class="source-genres">
+            {% for g in source.genres_list %}
+                <span class="genre-tag">{{ g }}</span>
+            {% endfor %}
+        </div>
+        <p class="source-meta">Dir: {{ source.director }} · {{ source.runtime }} min</p>
+    </div>
+
+    <h3 class="results-heading">Movies similar to this</h3>
+
+    {% for rec in results %}
+    <div class="mini-card recommend">
+        <div class="mini-rank">#{{ forloop.counter }}</div>
+        <div class="mini-info">
+            <span class="mini-title">{{ rec.title }}
+                <span class="mini-year">({{ rec.year }})</span>
+            </span>
+            <div class="mini-genres">
+                {% for g in rec.genres_list %}<span class="genre-tag">{{ g }}</span>{% endfor %}
+            </div>
+            <p class="mini-meta">Dir: {{ rec.director }}</p>
+        </div>
+    </div>
+    {% endfor %}
+
+    {% endif %}
+
+</div>
+
+{% endblock %}
