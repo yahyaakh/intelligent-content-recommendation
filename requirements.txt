@@ -1,6 +1,40 @@
-pandas
-numpy
-scikit-learn
-scikit-surprise
-requests
-python-dotenv
+# Exact versions of the environment that produced the report's results (conda env "recomm_env").
+# Python 3.11.15. Install with:  pip install -r requirements.txt
+# FAISS is also available from conda-forge (faiss-cpu) if the pip wheel does not install.
+
+# Data and metrics
+numpy==2.4.6
+pandas==2.3.3
+scipy==1.17.1
+scikit-learn==1.8.0
+sympy==1.14.0
+tqdm==4.67.3
+joblib==1.5.3
+
+# Recommenders
+scikit-surprise==1.1.5        # SVD baseline
+recommenders==1.2.1           # NCF (NeuMF) training
+tensorflow==2.21.0            # backend of recommenders' NCF
+torch==2.12.0                 # NCF fold-in, semantic-ID models, rating prediction
+xgboost==3.2.0                # learned ranker
+lightgbm==4.6.0               # learned ranker
+
+# Embeddings and vector search
+faiss-cpu==1.15.1
+
+# LLM and API access (Ollama local / Ollama cloud / DeepSeek / TMDB are called over HTTP)
+requests==2.32.5
+python-dotenv==1.2.2
+
+# Figures and web application
+matplotlib==3.10.9
+Django==5.2.12
+
+# Not needed for the report: only the exploratory scripts LLMS_test.py, langchain_test.py,
+# SemanticContentModel.py and sementic_test_script.py use these.
+# sentence-transformers==6.1.0
+# transformers==5.18.0
+# langchain-chroma==1.1.0
+# langchain-community==0.4.2
+# langchain-ollama==1.1.0
+# langchain-text-splitters==1.1.3

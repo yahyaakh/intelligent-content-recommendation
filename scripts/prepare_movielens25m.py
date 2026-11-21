@@ -5,7 +5,8 @@ import os
 print("Loading ML-25M files...")
 ratings_raw = pd.read_csv('data/ml-25m/ratings.csv')
 links       = pd.read_csv('data/ml-25m/links.csv')
-your_movies = pd.read_csv('data/data/processed/movies.csv')
+your_movies = pd.read_csv("data/data/processed_30k/movies.csv")
+
 
 print(f"Raw ratings: {len(ratings_raw):,}")
 print(f"Links:       {len(links):,}")
@@ -14,15 +15,12 @@ print(f"Your movies: {len(your_movies):,}")
 # ── STEP 1: FILTER TO ACTIVE USERS AND POPULAR MOVIES ────────────────────────
 print("\nFiltering...")
 
-movie_counts   = ratings_raw['movieId'].value_counts()
-popular_movies = movie_counts[movie_counts >= 100].index
 
 user_counts  = ratings_raw['userId'].value_counts()
 active_users = user_counts[user_counts >= 500].index
 
 ratings_filtered = ratings_raw[
-    ratings_raw['movieId'].isin(popular_movies) &
-    ratings_raw['userId'].isin(active_users)
+    ratings_raw["userId"].isin(active_users)
 ].copy()
 
 print(f"After filter: {len(ratings_filtered):,} ratings")
@@ -72,7 +70,7 @@ n = len(ratings_matched)
 runtime_map = your_movies.set_index('movie_id')['runtime'].to_dict()
 
 final_ratings = pd.DataFrame({
-    'user_id':  ratings_matched['userId'].values,
+    'user_id':  ratings_matched['userId'].values + 943,
     'movie_id': ratings_matched['tmdbId'].values,
     'rating':   ratings_matched['rating'].values,
     'timestamp': ratings_matched['timestamp'].values,
@@ -87,10 +85,11 @@ final_ratings['completion_rate'] = np.minimum(
     final_ratings['watch_duration'] / runtimes
 ).round(2)
 
-# round ratings to whole numbers — ML-25M uses half stars (0.5–5.0)
-# Surprise SVD expects whole numbers on scale 1–5
-final_ratings['rating'] = final_ratings['rating'].round(0).astype(int)
-final_ratings['rating'] = final_ratings['rating'].clip(1, 5)
+# Keep ML-25M's original half-star ratings (0.5–5.0).
+# They used to be rounded with .round(0), which rounds halves to the nearest EVEN
+# number (3.5 -> 4, 4.5 -> 4, 2.5 -> 2, 0.5 -> 0 -> clipped to 1) and distorted 34%
+# of the ratings. Surprise SVD handles half stars with Reader(rating_scale=(0.5, 5)).
+final_ratings['rating'] = final_ratings['rating'].astype(float)
 
 # deduplicate — keep last rating if user rated same movie twice
 final_ratings = final_ratings.drop_duplicates(
@@ -106,10 +105,12 @@ print(f"Rating distribution:\n{final_ratings['rating'].value_counts().sort_index
 # ── STEP 5: COMBINE ML-100K + ML-25M THEN SAVE ───────────────────────────────
 print("\nCombining with original ML-100K ratings...")
 
-output_path = 'data/data/processed/ratings.csv'
+output_dir = "data/data/processed_30k"
+output_path = os.path.join(output_dir, 'ratings.csv')
 
-# load the fresh ML-100K ratings that prepare_movielens.py just created
-ml100k_ratings = pd.read_csv(output_path)
+ml100k_ratings = pd.read_csv(
+    "data/data/processed_ml100k_v2/ratings.csv"
+)
 
 print(f"ML-100K ratings loaded: {len(ml100k_ratings):,}")
 print(f"ML-25M ratings:         {len(final_ratings):,}")
@@ -122,6 +123,7 @@ print(f"Combined total:         {len(combined):,}")
 print(f"Users 1-943 present:    {combined[combined['user_id'] <= 943]['user_id'].nunique()}")
 print(f"Avg ratings per user:   {len(combined) / combined['user_id'].nunique():.1f}")
 
+os.makedirs(output_dir, exist_ok=True)
 combined.to_csv(output_path, index=False)
 print(f"Saved to {output_path}")
 
@@ -131,7 +133,9 @@ print("\nUpdating users.csv...")
 
 # reset to original 943 ML-100K users only
 # prevents duplicates if this script is run multiple times
-old_users = pd.read_csv('data/data/processed/users.csv')
+old_users = pd.read_csv(
+    "data/data/processed_ml100k_v2/users.csv"
+)
 old_users = old_users[old_users['user_id'] <= 943].copy()
 print(f"Reset to original users: {len(old_users)}")
 
@@ -162,7 +166,8 @@ users_updated = pd.concat(
     ignore_index=True
 )
 
-users_updated.to_csv('data/data/processed/users.csv', index=False)
+users_updated.to_csv(os.path.join(output_dir, 'users.csv'), index=False)
+
 
 print(f"\nVerification:")
 print(f"  ML-100K users (real demographics): {len(old_users_ids_set)}")

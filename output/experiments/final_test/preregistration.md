@@ -1,6 +1,41 @@
 # Pre-registration: final test on the 814 test users (doc 36)
 
 **Status:** DRAFT, written 2026-10-29. It is frozen when it is **committed to git**: the commit date proves it was fixed before the run (doc 18 §9, step 2). After that commit nothing in §2–§6 changes. Any later deviation is listed in doc 36 as a deviation.
+## Amendment 1 (2026-10-29, after commit a400efe, before any run on the test users)
+
+**Correction to §1.** §1 says the test users have never been used. That is wrong. They were used before:
+
+| Doc | Measured on the 814 test users |
+|---|---|
+| 13 | DeepSeek V4.1 Flash p2 reranking Hybrid E, 10 seeds: 0.6169 (answers cached); also the popularity-candidate and gemma runs |
+| 15 | LTR v1 (XGBoost R2): 0.6446 |
+| 16 | **pre-registered:** LTR v2 0.6609 vs Hybrid E 0.6311 (10 seeds); 0.6257 vs 0.5970 (3 seeds); popularity 0.5598 |
+
+**Changes, which replace the matching parts of §2–§5:**
+
+1. **Already-known results are checks, not hypotheses.** These must be reproduced to within 5 × 10⁻⁴, or the run stops and the mismatch is reported:
+   - Hybrid E (both N);
+   - LTR v2 (both N);
+   - DeepSeek p2 (N = 10);
+   - popularity.
+
+   A1, A2 and B7 are removed from the families.
+2. **The DeepSeek p2 test answers of doc 13 are reused**, not requested again, so the numbers stay consistent with doc 13 and the fusion uses the same answers. The new calls are DeepSeek p5, Kimi K3 p2 and Kimi K3 p5 (N = 10, 814 users each).
+3. **Family A (primary), Bonferroni over 5:**
+
+   | # | Hypothesis | Note |
+   |---|---|---|
+   | A3 | EASE > Hybrid E, N = 10 | |
+   | A4 | EASE > Hybrid E, N = 3 | |
+   | A5 | LLM fusion > Hybrid E, N = 10 | |
+   | A6 | LTR v2 > Hybrid E, S = 50 | |
+   | A7 | Kimi K3 p2 equivalent to Hybrid E, N = 10 | equivalent if the 99% CI (1 − 0.05/5) lies inside ±0.02 |
+
+4. **Family B (secondary), Bonferroni over 7:** B1–B6 and B8 as in §5.
+5. **Bootstrap:** 10,000 resamples (seed 42) instead of 1,000, so the 99% interval of A7 is stable.
+6. **Code check before the test run.** Both boards are first recomputed on the validation users with the same code and must equal the saved validation results (`final_comparison/summary_val.csv`, `warm_benchmark/summary_val.csv`).
+7. **The test run uses its own driver script, `final_test.py`.** It calls the existing functions of `final_comparison.py`, `warm_benchmark.py`, `LightGBM_XBoost_rerank_experiment.py` and `cold_start_baselines.py` with the fixed settings. The validation scripts are left unchanged.
+
 **Plan it implements:** doc 18 §9.
 **Scripts:** `final_comparison.py` (cold-start board, N = 10 and N = 3) and `warm_benchmark.py` (history S = 50). Both currently refuse the test split. The only code change allowed before the run is a `test` option that loads the test users instead of the validation users, with no other change.
 **Outputs:** `output/experiments/final_test/` (own folder and own LLM caches, never mixed with the validation runs).

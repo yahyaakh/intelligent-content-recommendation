@@ -1,9 +1,35 @@
 # Secrets
 .env
 
-# Data (too large for GitHub)
-data/
-ncf_saved/
+# Data: MovieLens, TMDB and MIND may not be redistributed. Download them with the scripts.
+data/*
+!data/vocabularies/
+
+# Experiment outputs (about 15 GB: cached LLM answers, embeddings, models, features).
+# Only the pre-registrations and the final summary tables are kept in git.
+output/*
+!output/experiments/
+output/experiments/*
+!output/experiments/*/
+output/experiments/*/*
+!output/experiments/*/preregistration.md
+!output/experiments/final_test/summary_test.csv
+!output/experiments/final_test/tests_test.csv
+!output/experiments/standard_warm/summary.csv
+!output/experiments/standard_warm/tests.csv
+!output/news/
+output/news/*
+!output/news/final_test/
+output/news/final_test/*
+!output/news/final_test/preregistration.md
+
+# Report sources, slides and submission packages (published separately on the TDK site)
+thesis/*
+!thesis/thesis_documentation/
+!thesis/news_documentation/
+
+# Old news outputs (large)
+news/covisitation_results/
 
 # Django
 web/db.sqlite3
@@ -16,10 +42,16 @@ __pycache__/
 *.egg-info/
 .ipynb_checkpoints/
 
-# IDE
+# Tools, IDE and OS
+.claude/
 .idea/
 .vscode/
-
-# OS
 .DS_Store
 Thumbs.db
+
+# The learned-ranker pre-registration lives in a folder with a space in its name
+!output/experiments_ LightGBM_XBOOST/
+output/experiments_ LightGBM_XBOOST/*
+!output/experiments_ LightGBM_XBOOST/ltr_boosting/
+output/experiments_ LightGBM_XBOOST/ltr_boosting/*
+!output/experiments_ LightGBM_XBOOST/ltr_boosting/step6_preregistration.md

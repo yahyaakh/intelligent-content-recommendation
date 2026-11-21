@@ -190,7 +190,6 @@ def movie_search(request):
 def personal_recommend(request):
     if request.method == 'POST':
         import json
-        cli = get_recommender()
 
         # the JS sends a JSON list of {movie_id, rating}
         data = json.loads(request.body)
@@ -200,6 +199,12 @@ def personal_recommend(request):
         if not movie_ratings:
             return JsonResponse({'error': 'No movies selected.'}, status=400)
 
+        # the methods of the report (thesis engine), with constraints and the LLM options
+        method = data.get('method', 'original')
+        if method != 'original':
+            return thesis_recommend(data, movie_ratings, method, n)
+
+        cli = get_recommender()
         results = cli.get_recommendations_from_movies(movie_ratings, n)
 
         recs = []
@@ -249,3 +254,68 @@ def build_explanation(movie, profile):
     if len(reasons) > 1:
         text += " · " + " · ".join(reasons[1:])
     return text[0].upper() + text[1:]
+
+# ───────────────────────── the methods of the report (thesis_engine.py) ─────────────────────────
+
+def thesis_recommend(data, movie_ratings, method, n):
+    """Popularity, Hybrid E, EASE or the learned ranker, then the hard constraints, then (optional)
+    the LLM reorders the top 30. Returns the films, why films were removed, and time and tokens."""
+    from .thesis_engine import get_engine, METHODS
+    if method not in METHODS:
+        return JsonResponse({'error': f'Unknown method {method!r}.'}, status=400)
+    engine = get_engine()
+    try:
+        films, removed, info = engine.recommend(movie_ratings, method, n,
+                                                request=data.get('constraints') or {},
+                                                llm_rerank=bool(data.get('llm_rerank')))
+    except ValueError as error:          # e.g. an unknown genre or no usable seed film
+        return JsonResponse({'error': str(error)}, status=400)
+    except Exception as error:           # e.g. the LLM could not be reached
+        return JsonResponse({'error': f'{type(error).__name__}: {error}'}, status=500)
+
+    recs = []
+    for film in films:
+        recs.append({
+            'title': film.get('title', 'Unknown'),
+            'year': int(film.get('year', 0)),
+            'genres': [g for g in str(film.get('genres', '')).split('|') if g][:3],
+            'director': film.get('director', ''),
+            'rating': round(float(film.get('vote_average', 0)), 1),
+            'audience': film.get('llm_audience', ''),
+            'moods': [m for m in str(film.get('llm_mood', '')).split('|') if m],
+        })
+    return JsonResponse({'results': recs, 'info': info,
+                         'removed': [{'title': t, 'reason': r} for t, r in removed[:15]]})
+
+
+def thesis_options(request):
+    """Genres, moods, themes and intensity dimensions for the constraint panel."""
+    from .thesis_engine import get_engine
+    return JsonResponse(get_engine().options())
+
+
+def thesis_search(request):
+    """Film search in the thesis catalog (the same 1,957 films and ids as the old pages)."""
+    from .thesis_engine import get_engine
+    query = request.GET.get('q', '').strip()
+    if len(query) < 2:
+        return JsonResponse([], safe=False)
+    return JsonResponse(get_engine().search(query), safe=False)
+
+
+def parse_request(request):
+    """A typed request -> constraint settings, by the LLM (recomm.LLMRequestParser)."""
+    import json
+    from .thesis_engine import get_engine
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST only.'}, status=405)
+    text = json.loads(request.body).get('text', '').strip()
+    if not text:
+        return JsonResponse({'error': 'Type a request first.'}, status=400)
+    try:
+        constraints, info = get_engine().parse_request(text)
+    except ValueError as error:          # e.g. a name that is not in the catalog
+        return JsonResponse({'error': str(error)}, status=400)
+    except Exception as error:           # e.g. Ollama is not running
+        return JsonResponse({'error': f'{type(error).__name__}: {error}'}, status=500)
+    return JsonResponse({'constraints': constraints, 'info': info})

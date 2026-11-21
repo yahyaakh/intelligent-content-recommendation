@@ -4,7 +4,7 @@ import pandas as pd
 
 # add project root to path so recomm.py is importable
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "src"))  # shared modules live in src/
 
 # change working directory so data/ paths in recomm.py resolve correctly
 os.chdir(ROOT)
@@ -49,14 +49,22 @@ def _load():
     )
 
     print("Loading datasets...")
-    movies_df      = pd.read_csv('data/data/processed/movies.csv')
-    users_df       = pd.read_csv('data/data/processed/users.csv')
-    interactions_df = pd.read_csv('data/data/processed/ratings.csv')
+    # The same data as recomm.main(): the 1,957 films with their LLM labels and full credits (the
+    # ConstraintLayer needs llm_themes, llm_mood, cast_full, ...) and the half-star ratings.
+    movies_df = pd.read_csv('output/experiments/deepseek_v4.1_flash_v5/movies_enriched.csv').merge(
+        pd.read_csv('data/data/processed_30k/movies.csv'), on='movie_id', how='inner')
+    movies_df = movies_df.drop(columns=['Unnamed: 0', 'enrich_model', 'prompt_version', 'repaired'])
+    movies_df = movies_df.merge(
+        pd.read_csv('data/data/credits_full/credits_full.csv', usecols=['movie_id', 'cast_full', 'directors_full']),
+        on='movie_id', how='inner')
+    users_df       = pd.read_csv('data/data/processed_30k/users.csv')
+    interactions_df = pd.read_csv('data/data/processed_30k/ratings.csv')
+    interactions_df = interactions_df[interactions_df['movie_id'].isin(movies_df['movie_id'])]
 
     # This line removes duplicate rows from the ratings data where the same user rated the same movie more than once.
-    interactions_df = interactions_df.drop_duplicates(
-        subset=['user_id', 'movie_id'], keep='last'
-    )
+    interactions_df = (interactions_df.sort_values('timestamp')
+                       .drop_duplicates(subset=['user_id', 'movie_id'], keep='last')
+                       .reset_index(drop=True))
 
     print("Initialising recommenders...")
     content_rec  = ContentBasedRecommender(movies_df)
@@ -70,7 +78,9 @@ def _load():
     evaluator      = RecommendationEvaluator(interactions_df, movies_df)
     constraint_layer = ConstraintLayer(movies_df)
 
-    ncf_rec = NCFRecommender(interactions_df, movies_df, epochs=30)
+    # the saved model trained on the half-star ratings, as in recomm.main()
+    ncf_rec = NCFRecommender(interactions_df, movies_df, epochs=30,
+                             model_dir="output/models/ncf_saved_10k_halfstar_random75_25")
 
     cli = MovieRecommenderCLI(
         hybrid_rec, movies_df, users_df, interactions_df,

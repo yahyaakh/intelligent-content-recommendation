@@ -5,6 +5,22 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/personal.css' %}">
+<style>
+    /* added for the model choice, constraints and LLM options */
+    .options-panel { border: 1px solid #ddd; border-radius: 8px; padding: 14px 16px; margin: 16px 0; }
+    .options-panel h3 { margin: 0 0 10px; font-size: 1.05rem; }
+    .options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .options-grid label { display: flex; flex-direction: column; font-size: 0.9rem; gap: 4px; }
+    .options-grid select[multiple] { min-height: 110px; }
+    .request-box { width: 100%; min-height: 60px; box-sizing: border-box; padding: 8px; font: inherit; }
+    .small-btn { margin-top: 8px; padding: 6px 12px; cursor: pointer; }
+    .note { font-size: 0.85rem; color: #666; margin: 6px 0 0; }
+    .info-line { font-size: 0.9rem; color: #444; margin: 8px 0; }
+    .removed-list { font-size: 0.85rem; color: #777; margin: 6px 0 14px; padding-left: 18px; }
+    .audience-tag { font-size: 0.75rem; border: 1px solid #bbb; border-radius: 10px; padding: 1px 7px; margin-left: 6px; }
+    .error { color: #b00020; }
+    details summary { cursor: pointer; font-weight: 600; }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -21,6 +37,57 @@
     </div>
 
     <div id="selectedMovies" class="selected-movies"></div>
+
+    <!-- model choice -->
+    <div class="options-panel">
+        <h3>Method</h3>
+        <div class="options-grid">
+            <label>Recommender
+                <select id="method">
+                    <option value="ltr" selected>Learned ranker (XGBoost + LightGBM)</option>
+                    <option value="ease">EASE</option>
+                    <option value="hybrid_e">Hybrid E (item-CF + popularity)</option>
+                    <option value="popularity">Popularity</option>
+                    <option value="original">Content-based (original system)</option>
+                </select>
+            </label>
+            <label><span><input type="checkbox" id="llmRerank"> LLM reranking (DeepSeek V4.1 Flash)</span>
+                <span class="note">The LLM reorders the top 30. In the report it did not beat Hybrid E; it takes a few seconds.</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- constraints -->
+    <div class="options-panel" id="constraintPanel">
+        <details>
+            <summary>Constraints (optional)</summary>
+            <p class="note">Type what you want, and the LLM fills in the settings below. Or set them yourself.
+               Films that break a setting are removed; the order of the rest is not changed.</p>
+            <textarea id="requestText" class="request-box"
+                      placeholder='e.g. "something funny for my 8 year old, nothing scary"'></textarea>
+            <button id="parseBtn" class="small-btn" type="button">Fill in from my text (LLM)</button>
+            <p id="parseInfo" class="note"></p>
+
+            <div class="options-grid" style="margin-top:10px">
+                <label>Who is watching
+                    <select id="audience">
+                        <option value="">anyone</option>
+                        <option value="children">children (under 13)</option>
+                        <option value="teens">teens (13–16)</option>
+                    </select>
+                </label>
+                <label>Include genres (any of)<select id="include_genres" multiple></select></label>
+                <label>Exclude genres<select id="exclude_genres" multiple></select></label>
+                <label>Include moods (any of)<select id="include_moods" multiple></select></label>
+                <label>Exclude moods<select id="exclude_moods" multiple></select></label>
+                <label>About (themes, any of)<select id="include_themes" multiple></select></label>
+                <label>Actors (comma separated)<input type="text" id="include_actors" placeholder="e.g. Tom Hanks"></label>
+                <label>Directors (comma separated)<input type="text" id="include_directors" placeholder="e.g. Christopher Nolan"></label>
+            </div>
+            <div class="options-grid" id="intensityGrid" style="margin-top:10px"></div>
+            <p class="note">Hold Ctrl (Cmd on Mac) to pick several values in a list.</p>
+        </details>
+    </div>
 
     <div class="action-row">
         <label>Number of recommendations:
@@ -46,14 +113,47 @@ const suggestions = document.getElementById('suggestions');
 const selectedBox = document.getElementById('selectedMovies');
 const getBtn      = document.getElementById('getRecsBtn');
 const resultsBox  = document.getElementById('results');
+const methodBox   = document.getElementById('method');
+const LIST_FIELDS = ['include_genres', 'exclude_genres', 'include_moods', 'exclude_moods', 'include_themes'];
+const NAME_FIELDS = ['include_actors', 'include_directors'];
+let intensityDims = [];
+
+const csrftoken = () => document.querySelector('[name=csrfmiddlewaretoken]').value;
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// the constraint panel is filled from the thesis catalog
+fetch('/thesis-options/').then(r => r.json()).then(opts => {
+    const fill = (id, values) => {
+        const box = document.getElementById(id);
+        values.forEach(v => box.add(new Option(v, v)));
+    };
+    fill('include_genres', opts.genres); fill('exclude_genres', opts.genres);
+    fill('include_moods', opts.moods);   fill('exclude_moods', opts.moods);
+    fill('include_themes', opts.themes);
+    intensityDims = opts.intensity_dims;
+    const grid = document.getElementById('intensityGrid');
+    intensityDims.forEach(dim => {
+        grid.insertAdjacentHTML('beforeend', `
+            <label>Max ${dim.replace('_', ' ')}
+                <select id="int_${dim}">
+                    <option value="">no limit</option>
+                    <option value="0">0 none</option>
+                    <option value="1">1 mild or brief</option>
+                    <option value="2">2 moderate</option>
+                    <option value="3">3 strong</option>
+                </select>
+            </label>`);
+    });
+});
 
 let debounce;
 searchInput.addEventListener('input', () => {
     clearTimeout(debounce);
     const q = searchInput.value.trim();
     if (q.length < 2) { suggestions.innerHTML = ''; return; }
+    const url = methodBox.value === 'original' ? '/movie-search/' : '/thesis-search/';
     debounce = setTimeout(() => {
-        fetch(`/movie-search/?q=${encodeURIComponent(q)}`)
+        fetch(`${url}?q=${encodeURIComponent(q)}`)
             .then(r => r.json())
             .then(data => renderSuggestions(data));
     }, 250);
@@ -95,14 +195,14 @@ function renderSelected() {
         const card = document.createElement('div');
         card.className = 'selected-card';
         card.innerHTML = `
-            <span class="selected-title">${m.title} <span class="selected-year">(${m.year})</span></span>
+            <span class="selected-title">${escapeHtml(m.title)} <span class="selected-year">(${m.year})</span></span>
             <div class="selected-controls">
                 <select onchange="setRating(${m.movie_id}, this.value)">
-                    <option value="5" selected>★ 5</option>
-                    <option value="4">★ 4</option>
-                    <option value="3">★ 3</option>
-                    <option value="2">★ 2</option>
-                    <option value="1">★ 1</option>
+                    <option value="5" ${m.rating === 5 ? 'selected' : ''}>★ 5</option>
+                    <option value="4" ${m.rating === 4 ? 'selected' : ''}>★ 4</option>
+                    <option value="3" ${m.rating === 3 ? 'selected' : ''}>★ 3</option>
+                    <option value="2" ${m.rating === 2 ? 'selected' : ''}>★ 2</option>
+                    <option value="1" ${m.rating === 1 ? 'selected' : ''}>★ 1</option>
                 </select>
                 <button class="remove-btn" onclick="removeMovie(${m.movie_id})">✕</button>
             </div>`;
@@ -111,38 +211,111 @@ function renderSelected() {
     getBtn.disabled = selected.length === 0;
 }
 
+// panel -> constraint dict (only the fields that are set, like the request dict of recomm.py)
+function readConstraints() {
+    const c = {};
+    const audience = document.getElementById('audience').value;
+    if (audience) c.audience = audience;
+    LIST_FIELDS.forEach(id => {
+        const values = [...document.getElementById(id).selectedOptions].map(o => o.value);
+        if (values.length) c[id] = values;
+    });
+    NAME_FIELDS.forEach(id => {
+        const names = document.getElementById(id).value.split(',').map(s => s.trim()).filter(Boolean);
+        if (names.length) c[id] = names;
+    });
+    const limits = {};
+    intensityDims.forEach(dim => {
+        const v = document.getElementById(`int_${dim}`).value;
+        if (v !== '') limits[dim] = parseInt(v);
+    });
+    if (Object.keys(limits).length) c.max_intensity = limits;
+    return c;
+}
+
+// constraint dict (from the LLM) -> panel
+function showConstraints(c) {
+    document.getElementById('audience').value = c.audience || '';
+    LIST_FIELDS.forEach(id => {
+        const wanted = new Set(c[id] || []);
+        [...document.getElementById(id).options].forEach(o => { o.selected = wanted.has(o.value); });
+    });
+    NAME_FIELDS.forEach(id => { document.getElementById(id).value = (c[id] || []).join(', '); });
+    intensityDims.forEach(dim => {
+        const limits = c.max_intensity || {};
+        document.getElementById(`int_${dim}`).value = dim in limits ? String(limits[dim]) : '';
+    });
+}
+
+document.getElementById('parseBtn').addEventListener('click', () => {
+    const info = document.getElementById('parseInfo');
+    info.textContent = 'Asking the LLM...';
+    fetch('/parse-request/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken() },
+        body: JSON.stringify({ text: document.getElementById('requestText').value })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) { info.innerHTML = `<span class="error">${escapeHtml(data.error)}</span>`; return; }
+        showConstraints(data.constraints);
+        const set = Object.keys(data.constraints);
+        info.textContent = `LLM filled in: ${set.length ? set.join(', ') : 'nothing'} · `
+            + `${data.info.seconds} s, ${data.info.tokens_in} + ${data.info.tokens_out} tokens. Check the settings below.`;
+    });
+});
+
 getBtn.addEventListener('click', () => {
     resultsBox.innerHTML = '<p class="loading">Finding recommendations...</p>';
-
-    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    const method = methodBox.value;
 
     fetch('/personal/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-CSRFToken': csrftoken
+            'X-CSRFToken': csrftoken()
         },
         body: JSON.stringify({
             movies: selected.map(s => ({ movie_id: s.movie_id, rating: s.rating })),
-            n: document.getElementById('numResults').value
+            n: document.getElementById('numResults').value,
+            method: method,
+            constraints: method === 'original' ? {} : readConstraints(),
+            llm_rerank: method !== 'original' && document.getElementById('llmRerank').checked
         })
     })
     .then(r => r.json())
-    .then(data => renderResults(data.results || []));
+    .then(data => {
+        if (data.error) { resultsBox.innerHTML = `<p class="loading error">${escapeHtml(data.error)}</p>`; return; }
+        renderResults(data.results || [], data.info, data.removed || []);
+    });
 });
 
-function renderResults(recs) {
-    if (!recs.length) { resultsBox.innerHTML = '<p class="loading">No recommendations found.</p>'; return; }
-    let html = '<h3 class="results-heading">Recommended for you</h3>';
+function renderResults(recs, info, removed) {
+    let html = '';
+    if (info) {
+        let line = `${escapeHtml(info.method)} · ${info.seeds_used} seed film(s) used · `
+                 + `${info.removed} film(s) removed by the constraints · ${info.total_seconds} s`;
+        if (info.llm) line += ` · LLM ${escapeHtml(info.llm)}: ${info.llm_seconds} s, `
+                            + `${info.llm_tokens_in} + ${info.llm_tokens_out} tokens`;
+        html += `<p class="info-line">${line}</p>`;
+        if (removed.length) {
+            html += '<details><summary>Why films were removed (first 15)</summary><ul class="removed-list">'
+                  + removed.map(r => `<li>${escapeHtml(r.title)} — ${escapeHtml(r.reason)}</li>`).join('')
+                  + '</ul></details>';
+        }
+    }
+    if (!recs.length) { resultsBox.innerHTML = html + '<p class="loading">No recommendations found.</p>'; return; }
+    html += '<h3 class="results-heading">Recommended for you</h3>';
     recs.forEach((r, i) => {
-        const genres = r.genres.map(g => `<span class="genre-tag">${g}</span>`).join('');
+        const genres = r.genres.map(g => `<span class="genre-tag">${escapeHtml(g)}</span>`).join('');
+        const audience = r.audience ? `<span class="audience-tag">${escapeHtml(r.audience)}</span>` : '';
         html += `
         <div class="mini-card recommend">
             <div class="mini-rank">#${i + 1}</div>
             <div class="mini-info">
-                <span class="mini-title">${r.title} <span class="mini-year">(${r.year})</span></span>
+                <span class="mini-title">${escapeHtml(r.title)} <span class="mini-year">(${r.year})</span>${audience}</span>
                 <div class="mini-genres">${genres}</div>
-                <p class="mini-meta">Dir: ${r.director}</p>
+                <p class="mini-meta">Dir: ${escapeHtml(r.director)}</p>
             </div>
             <div class="mini-score">${r.rating}</div>
         </div>`;
