@@ -41,11 +41,26 @@ One row per run, newest last. The numbers are copied from `output/news/results/<
 | 2026-11-24 | nrms_user_pop_pos_neg8_long | val | 0.6758 | 0.3141 | 0.3407 | 0.4010 | 14 | as pop_pos_neg8, dropout 0.1, 5 epochs (epoch 2 chosen) |
 | 2026-11-24 | nrms_user_pop_pos_neg8_no9 | val | 0.6765 | 0.3135 | 0.3406 | 0.4011 | 14 | as pop_pos_neg8, trained on Nov 10–13 only |
 | 2026-11-24 | nrms_user_pop_pos_neg8_cscale | val | 0.6834 | 0.3192 | 0.3469 | 0.4070 | 14 | as pop_pos_neg8, + content weight per history group |
-| 2026-11-24 | nrms_switch_g0_cumctr__pop_pos_neg8_cscale | val | **0.6840** | **0.3195** | **0.3474** | **0.4074** | 14 | empty history: cum_ctr; otherwise nrms_user_pop_pos_neg8_cscale (group-0 rule of doc 12) |
+| 2026-11-24 | nrms_switch_g0_cumctr__pop_pos_neg8_cscale | val | 0.6840 | 0.3195 | 0.3474 | 0.4074 | 14 | empty history: cum_ctr; otherwise nrms_user_pop_pos_neg8_cscale (group-0 rule of doc 12) |
 | 2026-11-25 | nrms_user_pop_pos_neg8_seed1 | val | 0.6809 | 0.3175 | 0.3453 | 0.4054 | 14 | seed check: pop_pos_neg8 with seed 1 |
 | 2026-11-25 | nrms_user_pop_pos_neg8_cscale_seed1 | val | 0.6819 | 0.3179 | 0.3460 | 0.4063 | 14 | seed check: pop_pos_neg8_cscale with seed 1 |
 | 2026-11-25 | nrms_user_pop_pos_neg8_seed2 | val | 0.6781 | 0.3140 | 0.3404 | 0.4012 | 14 | seed check: pop_pos_neg8 with seed 2 |
 | 2026-11-25 | nrms_user_pop_pos_neg8_cscale_seed2 | val | 0.6825 | 0.3190 | 0.3464 | 0.4068 | 14 | seed check: pop_pos_neg8_cscale with seed 2; cscale > pop_pos_neg8 for all 3 seeds (mean 0.6826 vs 0.6795) |
+| 2026-11-25 | nrms_cscale_seedavg3 | val | 0.6855 | 0.3209 | 0.3493 | 0.4094 | 15 | mean of within-impression standardised scores of pop_pos_neg8_cscale, seeds 42, 1, 2 |
+| 2026-11-25 | nrms_cscale_seedavg3_switch | val | 0.6859 | 0.3212 | 0.3496 | 0.4098 | 15 | empty history: cum_ctr; otherwise nrms_cscale_seedavg3 |
+| 2026-11-25 | blend_seedavg3_m6_equal | val | 0.6919 | 0.3195 | 0.3489 | 0.4105 | 15 | 0.5 × seed average + 0.5 × M6 (lgbm_minilm_cumctr_mono), both standardised within impressions; weight fixed in advance |
+| 2026-11-25 | blend_seedavg3_m6_equal_switch | val | 0.6921 | 0.3197 | 0.3491 | 0.4107 | 15 | empty history: cum_ctr; otherwise blend_seedavg3_m6_equal |
+| 2026-11-25 | nrms_user_pop_pos_neg8_cscale_cat | val | 0.6907 | 0.3230 | 0.3522 | 0.4131 | 16 | as pop_pos_neg8_cscale, + learned category and subcategory vectors (32 each) on the article input; epoch 3 of 3 |
+| 2026-11-25 | nrms_user_pop_pos_neg8_cscale_fresh | val | 0.6854 | 0.3208 | 0.3489 | 0.4090 | 16 | as pop_pos_neg8_cscale, + age, showings in the last hour and older_than_log next to cum_ctr (weight per input and group); epoch 2 of 3 |
+| 2026-11-25 | nrms_switch_g0_cumctr__pop_pos_neg8_cscale_cat | val | 0.6909 | 0.3233 | 0.3526 | 0.4134 | 16 | empty history: cum_ctr; otherwise nrms_user_pop_pos_neg8_cscale_cat |
+| 2026-11-25 | nrms_user_pop_pos_neg8_cscale_cat_fresh | val | 0.6937 | 0.3255 | 0.3549 | 0.4159 | 16 | cat + fresh in one model; epoch 3 of 3; empty histories 0.6046 vs popularity 0.6049 |
+| 2026-11-25 | nrms_switch_g0_cumctr__pop_pos_neg8_cscale_cat_fresh | val | 0.6937 | 0.3256 | 0.3551 | 0.4159 | 16 | empty history: cum_ctr; otherwise nrms_user_pop_pos_neg8_cscale_cat_fresh |
+| 2026-11-26 | nrms_user_pop_pos_neg8_cscale_cat_fresh_seed1 | val | 0.6973 | 0.3271 | 0.3567 | 0.4179 | 16 | seed check: cat + fresh with seed 1; +0.0154 AUC over cscale seed 1 |
+| 2026-11-26 | nrms_user_pop_pos_neg8_cscale_cat_fresh_seed2 | val | 0.6940 | 0.3251 | 0.3541 | 0.4156 | 16 | seed check: cat + fresh with seed 2; +0.0114 AUC over cscale seed 2; mean over 3 seeds 0.6950 / 0.4165 |
+| 2026-11-26 | nrms_catfresh_seedavg3 | val | 0.6996 | 0.3293 | 0.3596 | **0.4208** | 16 | mean of within-impression standardised scores of cat + fresh, seeds 42, 1, 2; empty histories 0.6072 (popularity 0.6049) |
+| 2026-11-26 | nrms_catfresh_seedavg3_switch | val | 0.6996 | **0.3294** | **0.3597** | **0.4208** | 16 | empty history: cum_ctr; otherwise nrms_catfresh_seedavg3 |
+| 2026-11-26 | blend_catfresh_seedavg3_m6_equal | val | **0.7005** | 0.3248 | 0.3554 | 0.4174 | 16 | 0.5 × cat + fresh seed average + 0.5 × M6, both standardised within impressions; weight fixed in advance (doc 15 recipe); empty histories 0.6125 |
+| 2026-11-26 | blend_catfresh_seedavg3_m6_equal_switch | val | 0.7003 | 0.3249 | 0.3555 | 0.4174 | 16 | empty history: cum_ctr; otherwise blend_catfresh_seedavg3_m6_equal |
 
 **Internal validation (Nov 14, 431,517 impressions; scikit-learn nDCG, not `mind_eval`; not comparable with the table above):**
 

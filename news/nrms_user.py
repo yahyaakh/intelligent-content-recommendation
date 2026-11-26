@@ -18,6 +18,12 @@ Variants (every one is a separate selection on Nov 14 and is reported, whatever 
                          vector may learn to stand in for popularity)
     pop_pos_neg8_cscale  pop_pos_neg8 + a learned content weight per history group: score = v[group] * u.c +
                          w[group] * pop, so new users can lean on popularity
+    pop_pos_neg8_cscale_cat    cscale + a learned category and subcategory vector (32 numbers each) added to the
+                         frozen MiniLM vector of every article before the projection (doc 16)
+    pop_pos_neg8_cscale_fresh  cscale + 3 more popularity inputs next to cum_ctr: log(1 + article age in hours),
+                         log(1 + showings in the last hour), older_than_log (0/1); each standardised on the fit
+                         split, one learned weight per input and history group (doc 16)
+    pop_pos_neg8_cscale_cat_fresh  both of the above in one model (doc 16)
 
 Command line (repository root, GPU build of PyTorch):
     python news/nrms_user.py check [variant]   # checks on small data + untrained AUC + overfit test; writes nothing
@@ -33,6 +39,7 @@ import sys
 import time
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,7 +57,8 @@ VAL_SAMPLE = 50_000          # impressions of val scored after every epoch (fixe
 GROUP_EDGES = np.array([0, 3, 10])   # history length -> group id 0: 0, 1: 1-3, 2: 4-10, 3: >10
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-BASE = {"pop": False, "pos": False, "neg": 4, "dropout": 0.2, "epochs": 3, "no9": False, "cscale": False}
+BASE = {"pop": False, "pos": False, "neg": 4, "dropout": 0.2, "epochs": 3, "no9": False, "cscale": False,
+        "cat": False, "fresh": False}
 BEST = {**BASE, "pop": True, "pos": True, "neg": 8}          # best of the first four on val (doc 14)
 VARIANTS = {
     "base": BASE,
@@ -60,7 +68,13 @@ VARIANTS = {
     "pop_pos_neg8_long": {**BEST, "dropout": 0.1, "epochs": 5},
     "pop_pos_neg8_no9": {**BEST, "no9": True},
     "pop_pos_neg8_cscale": {**BEST, "cscale": True},
+    "pop_pos_neg8_cscale_cat": {**BEST, "cscale": True, "cat": True},
+    "pop_pos_neg8_cscale_fresh": {**BEST, "cscale": True, "fresh": True},
+    "pop_pos_neg8_cscale_cat_fresh": {**BEST, "cscale": True, "cat": True, "fresh": True},
 }
+CAT_DIM = 32
+# fresh: (feature file, transform before standardising); age and showings are known at impression time
+FRESH_INPUTS = [("cum_ctr", "log"), ("age_hours", "log1p"), ("shown_1h", "log1p"), ("older_than_log", "none")]
 FIRST_FIT_DAY_NO9 = np.datetime64("2019-11-10")
 
 
@@ -128,7 +142,7 @@ def make_batch(data, lookup, pos, imp, rng, neg, pop=None):
     cand = lookup[data.candidates[cand_pos]]
 
     to = lambda x: torch.from_numpy(np.ascontiguousarray(x)).to(DEVICE)
-    return to(hist), to(cand), to(history_group(data, imp)), None if pop is None else to(pop[cand_pos])
+    return to(hist), to(cand), to(history_group(data, imp)), None if pop is None else to(pop[cand_pos]).float()
 
 
 def popularity_input(split_values, stats=None):
@@ -138,6 +152,28 @@ def popularity_input(split_values, stats=None):
         stats = {"mean": float(np.nanmean(logs)), "sd": float(np.nanstd(logs))}
     z = (logs - stats["mean"]) / stats["sd"]
     return np.nan_to_num(z, nan=0.0).astype(np.float32), stats
+
+
+def fresh_inputs(raw_of, slot_fit, slot_val):
+    """fresh variant: (n_slots, 4) float16 inputs for fit and val, standardised with the fit mean and sd;
+    NaN (cum_ctr on Nov 9) -> 0."""
+    fit_out = np.empty((int(slot_fit.sum()), len(FRESH_INPUTS)), dtype=np.float16)
+    val_out = np.empty((int(slot_val.sum()), len(FRESH_INPUTS)), dtype=np.float16)
+    stats = {}
+    for j, (name, how) in enumerate(FRESH_INPUTS):
+        raw = raw_of(name)
+        for k, (slots, out) in enumerate(((slot_fit, fit_out), (slot_val, val_out))):
+            x = raw[slots].astype(np.float32)
+            x = np.log(x) if how == "log" else np.log1p(x) if how == "log1p" else x
+            if k == 0:
+                stats[name] = {"transform": how, "mean": float(np.nanmean(x)), "sd": float(np.nanstd(x)),
+                               "nan_share": float(np.isnan(x).mean())}
+            out[:, j] = np.nan_to_num((x - stats[name]["mean"]) / stats[name]["sd"], nan=0.0)
+            del x
+    for name, st in stats.items():
+        print(f"fresh input {name} ({st['transform']}): mean {st['mean']:.3f} sd {st['sd']:.3f}, "
+              f"NaN share fit {st['nan_share']:.1%}")
+    return fit_out, val_out, stats
 
 
 def load_splits(cfg):
@@ -159,7 +195,13 @@ def load_splits(cfg):
     val_sample = npr.subset(val, keep, "val_sample")
     print(f"fit {fit.n_impressions} impressions, val {val.n_impressions}, val sample {val_sample.n_impressions}")
     pops = {"fit": None, "val": None, "val_sample": None, "stats": None}
-    if cfg["pop"]:
+    if cfg["fresh"]:
+        slot_val, slot_fit = np.repeat(mask, sizes), np.repeat(fit_mask, sizes)
+        pops["fit"], pops["val"], pops["stats"] = fresh_inputs(
+            lambda n: np.load(FEATURES / f"{n}_train.npy", mmap_mode="r"), slot_fit, slot_val)
+        pops["val_sample"] = pops["val"][np.repeat(keep, val.sizes)]
+        assert len(pops["fit"]) == fit.n_candidates and len(pops["val"]) == val.n_candidates
+    elif cfg["pop"]:
         raw = np.load(FEATURES / "cum_ctr_train.npy", mmap_mode="r")
         slot_val, slot_fit = np.repeat(mask, sizes), np.repeat(fit_mask, sizes)
         pops["fit"], stats = popularity_input(raw[slot_fit])
@@ -175,23 +217,53 @@ def load_splits(cfg):
     return fit, val, val_sample, pops
 
 
+def category_rows(n_rows, row_of):
+    """cat variant: category and subcategory code of every article-table row (0 = padding or unknown), from the
+    train, dev and test news files."""
+    news = pd.concat([me.load_news(s)[["category", "subcategory"]] for s in ("train", "dev", "test")])
+    news = news[~news.index.duplicated(keep="first")]
+    ids = news.index.to_numpy()
+    known = (ids < len(row_of)) & (row_of[np.minimum(ids, len(row_of) - 1)] >= 0)
+    out = []
+    for col in ("category", "subcategory"):
+        values = news[col].fillna("").to_numpy()
+        codes = pd.factorize(values)[0] + 1
+        codes[values == ""] = 0
+        rows = np.zeros(n_rows, dtype=np.int64)
+        rows[row_of[ids[known]] + 1] = codes[known]
+        out.append(rows)
+        print(f"{col}: {codes.max()} codes, {(rows[1:] > 0).mean():.1%} of table articles have one")
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------- model
 class UserEncoder(nn.Module):
     def __init__(self, dim_in=384, dim=DIM, heads=HEADS, dropout=0.2, use_pop=False, use_pos=False,
-                 use_cscale=False):
+                 use_cscale=False, cat_rows=None, n_pop=1):
         super().__init__()
+        self.register_buffer("cat_of_row", None if cat_rows is None else torch.from_numpy(cat_rows[0]))
+        self.register_buffer("sub_of_row", None if cat_rows is None else torch.from_numpy(cat_rows[1]))
+        if cat_rows is not None:                                           # cat variant
+            self.cat_emb = nn.Embedding(int(cat_rows[0].max()) + 1, CAT_DIM)
+            self.sub_emb = nn.Embedding(int(cat_rows[1].max()) + 1, CAT_DIM)
+            dim_in += 2 * CAT_DIM
         self.news = nn.Sequential(nn.Linear(dim_in, dim), nn.Tanh())       # projection on the frozen vectors
         self.self_att = nn.MultiheadAttention(dim, heads, dropout=dropout, batch_first=True)
         self.pool = nn.Sequential(nn.Linear(dim, 128), nn.Tanh(), nn.Linear(128, 1))
         self.empty_user = nn.Parameter(torch.zeros(dim))                   # user vector for an empty history
         self.drop = nn.Dropout(dropout)
         self.position = nn.Parameter(torch.zeros(MAX_HIST, dim)) if use_pos else None   # slot 49 = latest click
-        self.pop_weight = nn.Parameter(torch.zeros(4)) if use_pop else None             # one per history group
+        # one weight per history group (and per popularity input when n_pop > 1: fresh variant)
+        shape = (4,) if n_pop == 1 else (4, n_pop)
+        self.pop_weight = nn.Parameter(torch.zeros(shape)) if use_pop else None
         self.content_weight = nn.Parameter(torch.ones(4)) if use_cscale else None       # one per history group
 
     def encode_news(self, table, rows):
         """Table rows (any shape) -> article vectors (same shape + dim)."""
-        return self.news(self.drop(table[rows]))
+        x = table[rows]
+        if self.cat_of_row is not None:
+            x = torch.cat([x, self.cat_emb(self.cat_of_row[rows]), self.sub_emb(self.sub_of_row[rows])], dim=-1)
+        return self.news(self.drop(x))
 
     def encode_user(self, table, hist):
         """hist (B, MAX_HIST) table rows, 0 = padding -> user vectors (B, dim)."""
@@ -216,6 +288,8 @@ class UserEncoder(nn.Module):
         if self.pop_weight is None:
             return 0.0
         w = self.pop_weight[group]
+        if self.pop_weight.dim() == 2:                      # fresh: pop (B, 1 + neg, n_pop) or (n, n_pop)
+            return (w[:, None, :] * pop).sum(-1) if pop.dim() == 3 else (w * pop).sum(-1)
         return w[:, None] * pop if pop.dim() == 2 else w * pop
 
     def content_term(self, group, dots):
@@ -249,7 +323,7 @@ def score(model, table, lookup, data, pop=None, chunk=4096):
         group = torch.repeat_interleave(torch.from_numpy(history_group(data, imp)).to(DEVICE), sizes)
         s = model.content_term(group, s)
         if model.pop_weight is not None:
-            s = s + model.popularity_term(group, torch.from_numpy(pop[c0:c1]).to(DEVICE))
+            s = s + model.popularity_term(group, torch.from_numpy(pop[c0:c1]).to(DEVICE).float())
         out[c0:c1] = s.cpu().numpy()
     return out
 
@@ -259,10 +333,11 @@ def batch_loss(model, table, hist, cand, group, pop):
     return F.cross_entropy(logits, torch.zeros(len(logits), dtype=torch.long, device=DEVICE))
 
 
-def new_model(table, cfg, seed=SEED):
+def new_model(table, cfg, seed=SEED, cat_rows=None):
     torch.manual_seed(seed)
     return UserEncoder(dim_in=table.shape[1], dropout=cfg["dropout"], use_pop=cfg["pop"],
-                       use_pos=cfg["pos"], use_cscale=cfg["cscale"]).to(DEVICE)
+                       use_pos=cfg["pos"], use_cscale=cfg["cscale"], cat_rows=cat_rows,
+                       n_pop=len(FRESH_INPUTS) if cfg["fresh"] else 1).to(DEVICE)
 
 
 def train(model, table, lookup, fit, pos, imp, val_sample, cfg, pops, folder=None, seed=SEED):
@@ -292,7 +367,7 @@ def train(model, table, lookup, fit, pos, imp, val_sample, cfg, pops, folder=Non
         row = {"epoch": epoch, "train_loss": total.item() / len(order), "seconds": round(time.time() - start),
                **{f"val_sample_{m}": res[m] for m in me.METRICS}}
         if model.pop_weight is not None:
-            row["pop_weight"] = [round(w, 4) for w in model.pop_weight.detach().cpu().tolist()]
+            row["pop_weight"] = np.round(model.pop_weight.detach().cpu().numpy(), 4).tolist()   # fresh: 4 x 4
         if model.content_weight is not None:
             row["content_weight"] = [round(w, 4) for w in model.content_weight.detach().cpu().tolist()]
         history.append(row)
@@ -313,7 +388,16 @@ def run_check(variant):
     fit, val, val_sample, pops = load_splits(cfg)
     vectors, row_of = load_embeddings()
     table, lookup = article_table(vectors), row_of + 1
+    cat_rows = category_rows(len(table), row_of) if cfg["cat"] else None
     neg = cfg["neg"]
+    if cat_rows is not None:
+        news = me.load_news("train")
+        for nid in news.index[:200]:
+            if row_of[nid] >= 0:
+                same = news.index[news["category"] == news.at[nid, "category"]]
+                same = same[row_of[same] >= 0][:5]
+                assert len(set(cat_rows[0][row_of[same] + 1])) == 1 and cat_rows[0][row_of[nid] + 1] > 0
+        print("category codes: same category -> same code")
 
     # article_table
     n = int(np.flatnonzero(row_of >= 0)[0])
@@ -338,12 +422,12 @@ def run_check(variant):
         clicked_rows = set(lookup[fit.candidates[fit.offsets[i]:fit.offsets[i + 1]][fit.labels_of(i) == 1]].tolist())
         assert not clicked_rows & set(cand[k, 1:].tolist()), "a clicked article was drawn as a negative"
         if pop is not None:
-            assert np.isclose(pop[k, 0].item(), pops["fit"][p])
+            assert np.allclose(pop[k, 0].cpu().numpy(), pops["fit"][p])
     assert (cand != 0).all()
     print("article_table, click_samples, make_batch: all checks passed")
 
     # untrained model: loss about ln(1 + neg), val sample AUC about 0.5, no NaN for empty histories
-    model = new_model(table, cfg)
+    model = new_model(table, cfg, cat_rows=cat_rows)
     empty = torch.zeros((2, MAX_HIST), dtype=torch.long, device=DEVICE)
     two_pop = None if pop is None else pop[:2]
     assert torch.isfinite(model(table, empty, cand[:2], group[:2], two_pop)).all()
@@ -354,7 +438,7 @@ def run_check(variant):
     me.evaluate(val_sample, score(model, table, lookup, val_sample, pops["val_sample"]), name="untrained", save=False)
 
     # overfit test: the same 2,000 clicks with the same negatives every pass -> loss should fall far below ln(1+neg)
-    model = new_model(table, cfg)
+    model = new_model(table, cfg, cat_rows=cat_rows)
     model.drop.p = 0.0
     opt = torch.optim.AdamW(model.parameters(), lr=LR)
     small = np.arange(2000)
@@ -383,8 +467,9 @@ def run_val(variant, seed=SEED):
     fit, val, val_sample, pops = load_splits(cfg)
     vectors, row_of = load_embeddings()
     table, lookup = article_table(vectors), row_of + 1
+    cat_rows = category_rows(len(table), row_of) if cfg["cat"] else None
     pos, imp = click_samples(fit)
-    model = new_model(table, cfg, seed)
+    model = new_model(table, cfg, seed, cat_rows)
     history = train(model, table, lookup, fit, pos, imp, val_sample, cfg, pops, folder, seed)
 
     best = max(history, key=lambda r: r["val_sample_AUC"])["epoch"]
@@ -399,6 +484,10 @@ def run_val(variant, seed=SEED):
         parts.append("+ learned history-slot (recency) vectors")
     if cfg["cscale"]:
         parts.append("+ content weight v[history group] on u.c")
+    if cfg["cat"]:
+        parts.append(f"+ learned category and subcategory vectors ({CAT_DIM} each) on the article input")
+    if cfg["fresh"]:
+        parts.append("+ popularity inputs " + ", ".join(n for n, _ in FRESH_INPUTS) + ", weight per input and group")
     days = "Nov 10-13" if cfg["no9"] else "Nov 9-13"
     note = "; ".join(parts) + f"; trained on {days}, epoch {best} of {cfg['epochs']} chosen on a {VAL_SAMPLE} val sample"
     if seed != SEED:
@@ -430,7 +519,8 @@ def run_switch(variant):
     Metrics are computed within impressions, so mixing two score scales across impressions is harmless; every
     impression must get exactly the result of its source run, which is asserted."""
     name = f"nrms_switch_g0_cumctr__{variant}"
-    folder = OUT / "switch"
+    # doc 14's switch keeps its folder; every later variant gets its own subfolder (no file is shared)
+    folder = OUT / "switch" if variant == "pop_pos_neg8_cscale" else OUT / "switch" / variant
     folder.mkdir(parents=True, exist_ok=True)
     train_all = me.load_impressions("train")
     mask = npr.val_mask(train_all)
